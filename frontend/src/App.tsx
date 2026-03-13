@@ -775,43 +775,52 @@ function ProductTitle() {
           <h1>Nisaba</h1>
         </div>
         <div className="product-subtitle-group">
-          <div className="header-action info-action">
-            <span className="subtitle-info-trigger">an AI economic analyst ?</span>
-            <div className="header-tooltip info-tooltip" role="tooltip">
-              <p>
-                Pronounced ni-SA-ba.
-              </p>
-              <p>
-                In Sumerian mythology, Nisaba was the goddess of writing, accounting,
-                and administrative record-keeping.
-              </p>
-              <p>
-                Writing itself emerged in Mesopotamian bureaucracies to count what mattered -
-                grain rations, livestock, labour allocations, tax obligations.
-              </p>
-              <p>
-                Your Nisaba does the same. She has command of the full ABS economic dataset.
-              </p>
-              <p>
-                Ask her anything about the Australian economy and she'll pull the numbers,
-                run the calculations, and show you exactly what they say.
-              </p>
-              <p>
-                Produced by{" "}
-                <a href="https://dottieaistudio.com.au/" target="_blank" rel="noreferrer">
-                  Dottie AI Studio
-                </a>
-                {" "}· Powered by{" "}
-                <a
-                  href="https://github.com/seansoreilly/mcp-server-abs"
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  mcp-server-abs
-                </a>
-                .
-              </p>
-            </div>
+          <div className="info-action">
+            <span className="subtitle-info-trigger">
+              <span>an AI economic analyst</span>
+              <span className="subtitle-info-icon" aria-hidden="true" tabIndex={0}>
+                <svg viewBox="0 0 12 12" focusable="false">
+                  <circle cx="6" cy="6" r="5.25" fill="none" stroke="currentColor" strokeWidth="1" />
+                  <circle cx="6" cy="3.45" r="0.7" fill="currentColor" />
+                  <rect x="5.4" y="4.95" width="1.2" height="3.75" rx="0.6" fill="currentColor" />
+                </svg>
+                <div className="header-tooltip info-tooltip" role="tooltip">
+                  <p>
+                    Pronounced ni-SA-ba.
+                  </p>
+                  <p>
+                    In Sumerian mythology, Nisaba was the goddess of writing, accounting,
+                    and administrative record-keeping.
+                  </p>
+                  <p>
+                    Writing itself emerged in Mesopotamian bureaucracies to count what mattered -
+                    grain rations, livestock, labour allocations, tax obligations.
+                  </p>
+                  <p>
+                    Your Nisaba does the same. She has command of the full ABS economic dataset.
+                  </p>
+                  <p>
+                    Ask her anything about the Australian economy and she'll pull the numbers,
+                    run the calculations, and show you exactly what they say.
+                  </p>
+                  <p>
+                    Produced by{" "}
+                    <a href="https://dottieaistudio.com.au/" target="_blank" rel="noreferrer">
+                      Dottie AI Studio
+                    </a>
+                    {" "}· Powered by{" "}
+                    <a
+                      href="https://github.com/seansoreilly/mcp-server-abs"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      mcp-server-abs
+                    </a>
+                    .
+                  </p>
+                </div>
+              </span>
+            </span>
           </div>
         </div>
       </div>

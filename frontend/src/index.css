@@ -16,9 +16,10 @@ body,
 
 body {
   --page-gutter: 1.5rem;
+  --scrollbar-comp: 12px;
   margin: 0;
   overflow: hidden;
-  padding: var(--page-gutter);
+  padding: var(--page-gutter) 0 var(--page-gutter) var(--page-gutter);
   background-color: #f7f3ea;
 }
 
@@ -39,15 +40,18 @@ body {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
-  align-items: center;
+  align-items: flex-start;
   padding: 0 0 0.35rem;
   background: transparent;
 }
 
 .header-controls {
   display: inline-flex;
+  align-self: flex-start;
   align-items: center;
   gap: 0.48rem;
+  padding-top: 0;
+  padding-right: var(--page-gutter);
 }
 
 .title-group {
@@ -169,18 +173,20 @@ body {
 
 .app-main {
   flex: 1;
-  display: flex;
-  justify-content: center;
+  display: block;
   padding: 0.7rem 0 0;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: rgba(30, 43, 33, 0.28) transparent;
 }
 
 .chat-panel {
   width: min(980px, 100%);
+  margin: 0 auto;
+  transform: translateX(calc(var(--scrollbar-comp) / 2));
   min-height: 100%;
   display: flex;
   flex-direction: column;
@@ -258,7 +264,7 @@ body {
 }
 
 .bubble {
-  max-width: min(760px, 88%);
+  max-width: min(980px, 100%);
   padding: 1rem 1.05rem;
   border-radius: 20px;
   line-height: 1.55;
@@ -271,7 +277,7 @@ body {
 }
 
 .assistant-text-block {
-  width: min(760px, 88%);
+  width: min(980px, 100%);
   color: #1e2b21;
   line-height: 1.52;
   margin-bottom: 2rem;
@@ -291,7 +297,7 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 6px;
-  width: min(760px, 88%);
+  width: min(980px, 100%);
 }
 
 .progress-rail {
@@ -677,8 +683,8 @@ body {
   align-items: center;
   background: rgba(255, 255, 255, 0.92);
   border-radius: 22px;
-  box-shadow: 0 8px 24px rgba(47, 54, 45, 0.08);
-  padding: 0.55rem 0.65rem;
+  box-shadow: 0 0 18px rgba(47, 54, 45, 0.12);
+  padding: 0.55rem 0.45rem;
 }
 
 .composer textarea {
@@ -692,7 +698,7 @@ body {
   max-height: 10rem;
   overflow-y: auto;
   line-height: 1.35;
-  padding: 0.78rem 0.45rem;
+  padding: 0.78rem 0.2rem;
   font: inherit;
   color: inherit;
 }
@@ -738,12 +744,18 @@ body {
   justify-content: center;
   width: 2.15rem;
   height: 2.15rem;
+  padding: 0;
   border: 0;
   border-radius: 10px;
   background: transparent;
   color: rgba(30, 43, 33, 0.72);
   cursor: pointer;
   transition: color 140ms ease, opacity 140ms ease;
+}
+
+.header-icon-button svg {
+  width: 2rem;
+  height: 2rem;
 }
 
 .header-icon-button:hover {
@@ -756,11 +768,28 @@ body {
 }
 
 .subtitle-info-trigger {
-  display: inline-block;
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 0.14em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
   cursor: default;
+}
+
+.subtitle-info-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  color: rgba(30, 43, 33, 0.72);
+  width: 0.84rem;
+  height: 0.84rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.subtitle-info-icon svg {
+  width: 0.84rem;
+  height: 0.84rem;
+  display: block;
 }
 
 .header-tooltip {
@@ -807,8 +836,8 @@ body {
   color: inherit;
 }
 
-.header-action:hover .header-tooltip,
-.header-action:focus-within .header-tooltip {
+.subtitle-info-icon:hover .header-tooltip,
+.subtitle-info-icon:focus-within .header-tooltip {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
@@ -867,8 +896,8 @@ body {
   .assistant-text-block,
   .progress-step,
   .thinking-line {
-    width: min(100%, 760px);
-    max-width: min(100%, 760px);
+    width: min(980px, 100%);
+    max-width: min(980px, 100%);
   }
 
 }
@@ -958,12 +987,12 @@ body {
 
   .composer-input-shell {
     border-radius: 20px;
-    padding: 0.45rem 0.55rem;
+    padding: 0.45rem 0.38rem;
   }
 
   .composer textarea {
     min-height: 2.8rem;
-    padding: 0.72rem 0.35rem;
+    padding: 0.72rem 0.16rem;
   }
 
   .icon-send-button {
