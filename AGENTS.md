@@ -339,12 +339,3 @@ There is a repo-level narrative identity file at:
 - `/mnt/c/Users/jorda/OneDrive/Documents/Dottie/abs-mcp/SOUL.md`
 
 Use it as the source of truth for the product's naming, mythology, tone, and personality.
-
-If the user asks to refine the identity of the product, including:
-
-- the meaning of the name
-- the mythology behind it
-- the intended personality or tone
-- short product descriptions or identity language
-
-update `SOUL.md` directly so the change is captured in-repo for future work.

@@ -37,47 +37,7 @@ OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses"
 WEB_SEARCH_URL = "https://html.duckduckgo.com/html/"
 WEB_USER_AGENT = "Mozilla/5.0 (compatible; Seshat/1.0; +https://dottieaistudio.com.au/)"
 HARNESS_RESPONSE_SCHEMA: Dict[str, Any] = {
-    "type": "json_schema",
-    "name": "harness_loop_step",
-    "strict": False,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "step": {
-                "type": "object",
-                "properties": {
-                    "id": {
-                        "type": "string",
-                        "enum": [
-                            "use_abs_data_tool",
-                            "use_web_search_tool",
-                            "use_sandbox_tool",
-                            "propose_plan",
-                            "compose_final",
-                        ],
-                    },
-                    "summary": {"type": "string"},
-                },
-                "required": ["id", "summary"],
-                "additionalProperties": False,
-            },
-            "progress_note": {"type": "string"},
-            "model_output": {
-                "type": "object",
-                "properties": {
-                    "tool_name": {"type": "string"},
-                    "tool_input": {"type": "object"},
-                    "final_answer_markdown": {"type": "string"},
-                    "plan_markdown": {"type": "string"},
-                    "plan_context": {"type": "object"},
-                },
-                "required": [],
-                "additionalProperties": True,
-            },
-        },
-        "required": ["step", "progress_note", "model_output"],
-        "additionalProperties": False,
-    },
+    "type": "json_object",
 }
 PLAN_APPROVAL_RE = re.compile(r"^\s*(yes|y|ok|okay|proceed|go ahead|do it|use that|add it|sounds good)\b", re.IGNORECASE)
 PLAN_REJECT_RE = re.compile(r"^\s*(no|nah|stop|cancel|change|revise|refine)\b", re.IGNORECASE)
@@ -122,6 +82,7 @@ CORRECTION_EXPLANATION_RE = re.compile(
     r"\b(what caused|why did you make|why did that happen|explain what went wrong)\b",
     re.IGNORECASE,
 )
+MAX_CONSECUTIVE_RECOVERY_FAILURES = 3
 
 
 class ConversationCancelled(RuntimeError):
@@ -308,63 +269,14 @@ def _repair_harness_loop_output(
                 f"Parser error: {str(parse_error)}\n\n"
                 "Return one corrected JSON object only.\n"
                 "It must contain: step, progress_note, model_output.\n"
+                "Do not output a JSON schema, validation schema, or object with keys like type/properties/required.\n"
+                "Return an actual loop decision instance.\n"
                 "Do not include any explanation outside the JSON."
             ),
         },
     ]
     repaired_response = _call_model(repair_messages)
     return parse_harness_loop_output(repaired_response)
-
-
-def _fallback_harness_loop_output(payload: Dict[str, Any], raw_model_response: str = "") -> Dict[str, Any]:
-    loop_history = payload.get("loop_history") if isinstance(payload.get("loop_history"), list) else []
-    raw_text = str(raw_model_response or "").strip()
-    last_result_summary = ""
-    if loop_history:
-        last_item = loop_history[-1]
-        if isinstance(last_item, dict):
-            last_result_summary = str(last_item.get("result_summary") or "").strip()
-
-    if raw_text and loop_history and ("result:" in last_result_summary or "created artifacts:" in last_result_summary):
-        return {
-            "step": {
-                "id": "compose_final",
-                "summary": "Use the recovered plain-text answer as the final response",
-            },
-            "progress_note": "Finalising the answer from the completed analysis.",
-            "model_output": {
-                "final_answer_markdown": raw_text,
-            },
-        }
-
-    if not loop_history:
-        return {
-            "step": {
-                "id": "use_abs_data_tool",
-                "summary": "Load the curated ABS dataset catalog",
-            },
-            "progress_note": "Loading the curated ABS dataset catalog.",
-            "model_output": {
-                "tool_name": "abs_data_tool",
-                "tool_input": {
-                    "action": "catalog",
-                },
-            },
-        }
-
-    return {
-        "step": {
-            "id": "compose_final",
-            "summary": "Stop cleanly after repeated invalid loop output",
-        },
-        "progress_note": "The harness could not produce a valid next step, so it is stopping cleanly.",
-        "model_output": {
-            "final_answer_markdown": (
-                "I couldn’t complete a valid next tool step for this request.\n\n"
-                "Please try the question again, or narrow it to one curated ABS dataset."
-            ),
-        },
-    }
 
 
 def _question_needs_interpretation(user_message: str) -> bool:
@@ -1066,7 +978,29 @@ def _execute_web_search_tool(
         if not query:
             raise RuntimeError("web_search_tool action search requires query")
         max_results = int(tool_input.get("maxResults") or 5)
+        logger.info(
+            'Web search start cid=%s action=search query="%s" max_results=%s',
+            conversation_id,
+            _truncate(query, 280),
+            max(1, min(max_results, 8)),
+        )
         payload = _search_web(query, max_results=max(1, min(max_results, 8)))
+        results = payload.get("results") or []
+        preview = []
+        for item in results[:3]:
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "").strip()
+            url = str(item.get("url") or "").strip()
+            if title or url:
+                preview.append(f"{title} <{url}>".strip())
+        logger.info(
+            'Web search complete cid=%s action=search query="%s" result_count=%s preview="%s"',
+            conversation_id,
+            _truncate(query, 280),
+            len(results),
+            _truncate(" | ".join(preview), 500),
+        )
         artifact_path = run_dir / "artifacts" / f"web_search_{len(state.artifacts) + 1:03d}.json"
         _write_json(artifact_path, payload)
         record = _make_artifact_record(
@@ -1074,17 +1008,17 @@ def _execute_web_search_tool(
             path=artifact_path,
             kind="web_search_results",
             label=f"Web search: {query}",
-            summary=_truncate(f"Web search for '{query}' returned {len(payload.get('results') or [])} results.", 300),
+            summary=_truncate(f"Web search for '{query}' returned {len(results)} results.", 300),
         )
         return _tool_result(
             (
-                f"Web search for '{query}' returned {len(payload.get('results') or [])} results.\n"
+                f"Web search for '{query}' returned {len(results)} results.\n"
                 f"Created artifact: {record['artifact_id']}. Use sandbox to inspect or compare the results."
             ),
             {
                 "kind": "web_search",
                 "query": query,
-                "results": payload.get("results") or [],
+                "results": results,
                 "artifact_id": record["artifact_id"],
             },
         )
@@ -1093,7 +1027,20 @@ def _execute_web_search_tool(
         url = str(tool_input.get("url") or "").strip()
         if not url:
             raise RuntimeError("web_search_tool action fetch requires url")
+        logger.info(
+            'Web search start cid=%s action=fetch url="%s"',
+            conversation_id,
+            _truncate(url, 500),
+        )
         payload = _fetch_web_page(url)
+        logger.info(
+            'Web search complete cid=%s action=fetch url="%s" final_url="%s" title="%s" domain="%s"',
+            conversation_id,
+            _truncate(url, 500),
+            _truncate(str(payload.get("url") or ""), 500),
+            _truncate(str(payload.get("title") or ""), 200),
+            _truncate(str(payload.get("domain") or ""), 120),
+        )
         artifact_path = run_dir / "artifacts" / f"web_page_{len(state.artifacts) + 1:03d}.json"
         _write_json(artifact_path, payload)
         record = _make_artifact_record(
@@ -1831,6 +1778,19 @@ def _record_loop_feedback(
     state.loop_history.append(entry)
 
 
+def _count_recent_recovery_failures(state) -> int:
+    count = 0
+    for item in reversed(state.loop_history):
+        if not isinstance(item, dict):
+            break
+        result_data = item.get("result_data") if isinstance(item.get("result_data"), dict) else {}
+        kind = str(result_data.get("kind") or "").strip()
+        if kind not in {"model_call_error", "harness_parse_error"}:
+            break
+        count += 1
+    return count
+
+
 def _reset_context_after_curation(state, plan_context: Dict[str, Any]) -> None:
     dataset_id = str(plan_context.get("curate_dataset_id") or "").strip()
     dataset_title = str(plan_context.get("curated_dataset_title") or dataset_id).strip()
@@ -2017,7 +1977,38 @@ def generate_response(
                 protected_loop_history_count=protected_loop_history_count,
                 protected_artifact_count=protected_artifact_count,
             )
-            raw_model_response = _call_model(build_model_messages(payload))
+            try:
+                raw_model_response = _call_model(build_model_messages(payload))
+            except Exception as exc:
+                logger.exception(
+                    "Model call failed cid=%s loop=%s error=%s",
+                    conversation_id,
+                    loop_index,
+                    exc,
+                )
+                _record_loop_feedback(
+                    state,
+                    step={
+                        "id": "model_call_error",
+                        "summary": "Model API call failed before a loop decision was returned",
+                    },
+                    progress_note="Recovering from a model call failure.",
+                    result_summary=(
+                        "The model API call failed before the harness received a valid loop decision.\n"
+                        f"Error: {str(exc)}"
+                    ),
+                    result_data={
+                        "kind": "model_call_error",
+                        "error": str(exc),
+                    },
+                )
+                store.save(state)
+                if _count_recent_recovery_failures(state) >= MAX_CONSECUTIVE_RECOVERY_FAILURES:
+                    raise RuntimeError(
+                        "The harness hit repeated model-call failures and stopped after 3 recovery attempts."
+                    )
+                status_callback("That loop hit a model error. Trying again.")
+                continue
             try:
                 parsed = parse_harness_loop_output(raw_model_response)
             except HarnessParserError as exc:
@@ -2041,7 +2032,33 @@ def generate_response(
                         loop_index,
                         str(repair_exc),
                     )
-                    parsed = _fallback_harness_loop_output(payload, raw_model_response)
+                    _record_loop_feedback(
+                        state,
+                        step={
+                            "id": "invalid_model_output",
+                            "summary": "Model returned malformed harness JSON",
+                        },
+                        progress_note="Recovering from an invalid model response.",
+                        result_summary=(
+                            "The model returned malformed harness JSON and the repair pass also failed.\n"
+                            f"Initial parse error: {str(exc)}\n"
+                            f"Repair parse error: {str(repair_exc)}\n"
+                            f"Raw output preview: {_truncate(raw_model_response, 600)}"
+                        ),
+                        result_data={
+                            "kind": "harness_parse_error",
+                            "initial_error": str(exc),
+                            "repair_error": str(repair_exc),
+                            "raw_output_preview": _truncate(raw_model_response, 600),
+                        },
+                    )
+                    store.save(state)
+                    if _count_recent_recovery_failures(state) >= MAX_CONSECUTIVE_RECOVERY_FAILURES:
+                        raise RuntimeError(
+                            "The harness hit repeated malformed model outputs and stopped after 3 recovery attempts."
+                        )
+                    status_callback("That loop came back malformed. Trying again.")
+                    continue
 
             step = parsed["step"]
             progress_note = parsed["progress_note"]

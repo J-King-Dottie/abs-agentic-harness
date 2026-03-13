@@ -154,6 +154,7 @@ async def chat(request: ChatRequest):
                     break
                 elif kind == "error":
                     yield json.dumps({"type": "error", "message": payload}, ensure_ascii=False) + "\n"
+                    yield json.dumps({"type": "done"}, ensure_ascii=False) + "\n"
                     break
         finally:
             if not generation_task.done():

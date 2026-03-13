@@ -27,8 +27,7 @@ const API_BASE = "";
 const STORAGE_KEY = "abs-analyst-session";
 const EXAMPLE_PROMPTS = [
   "What data do you have access to?",
-  "What are the drivers of a decline in Manufacturing in Australia?",
-  "How many jobs are there in Australia's gas intensive sectors?",
+  "Show me a chart of Manufacturing jobs over the last 2 decades?",
 ];
 
 function createConversationId() {
@@ -352,14 +351,14 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
     },
     grid: useHorizontalBars
       ? {
-          top: spec.title ? 20 : 8,
+          top: spec.series.length > 1 ? (spec.title ? 54 : 42) : spec.title ? 20 : 8,
           right: 20,
           bottom: spec.xLabel ? 52 : 22,
           left: Math.min(220, Math.max(110, longestXAxisLabelLength * 7)),
           containLabel: false,
         }
       : {
-          top: spec.title ? 20 : 8,
+          top: spec.series.length > 1 ? (spec.title ? 54 : 42) : spec.title ? 20 : 8,
           right: 20,
           bottom: rotateVerticalLabels ? 92 : spec.xLabel ? 54 : 30,
           left: spec.yLabel ? 72 : 58,
@@ -387,7 +386,8 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
     legend:
       spec.series.length > 1
         ? {
-            bottom: 0,
+            top: spec.title ? 18 : 6,
+            left: "center",
             icon: "circle",
             itemWidth: 10,
             itemHeight: 10,
@@ -550,7 +550,7 @@ function NisabaLoader() {
     >
       <g className="nisaba-loader-group">
         <rect
-          className="nisaba-stroke nisaba-stroke-1"
+          className="nisaba-stroke nisaba-border nisaba-stroke-1"
           x="8"
           y="7"
           width="64"
@@ -1203,7 +1203,6 @@ function App() {
           <ProductTitle />
         </div>
         <div className="header-controls">
-          <div className="user-chip">{session.user.email}</div>
           <div className="header-action">
             <button
               type="button"

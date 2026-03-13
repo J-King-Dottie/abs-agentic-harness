@@ -248,10 +248,6 @@ def main() -> int:
             raise FileNotFoundError(f"SOUL.md not found at {soul_path}")
         return soul_path.read_text(encoding="utf-8")
 
-    def update_soul_md(text: str):
-        soul_path.write_text(str(text), encoding="utf-8")
-        return str(soul_path)
-
     def _load_json_array(path: Path):
         if not path.exists():
             return []
@@ -406,7 +402,6 @@ def main() -> int:
         "result": None,
         "sort_rows_by_time": sort_rows_by_time,
         "upsert_curated_dataset_ai": upsert_curated_dataset_ai,
-        "update_soul_md": update_soul_md,
     }
 
     stdout_buffer = io.StringIO()

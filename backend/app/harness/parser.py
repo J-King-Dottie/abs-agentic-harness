@@ -175,13 +175,6 @@ def _extract_json_candidate(raw_text: str) -> str:
     if direct:
         return direct
 
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        candidate = _decode_first_json_object(text[index:])
-        if candidate:
-            return candidate
-
     raise HarnessParserError("No JSON object found in model output.")
 
 
