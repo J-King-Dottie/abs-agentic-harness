@@ -31,7 +31,7 @@ The stack includes:
 - React frontend
 - FastAPI backend
 
-Produced by Dottie AI Studio · Powered by mcp-server-abs.
+Produced by [Dottie AI Studio](https://dottieaistudio.com.au/) · Powered by [mcp-server-abs](https://github.com/seansoreilly/mcp-server-abs).
 
 ## Requirements
 
