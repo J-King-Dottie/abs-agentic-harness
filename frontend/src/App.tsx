@@ -27,6 +27,7 @@ const API_BASE = "";
 const STORAGE_KEY = "abs-analyst-session";
 const EXAMPLE_PROMPTS = [
   "What data do you have access to?",
+  "Which industries have the highest job vacancies?",
   "Show me a chart of Manufacturing jobs over the last 2 decades?",
 ];
 

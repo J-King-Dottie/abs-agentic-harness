@@ -843,6 +843,13 @@ body {
   transform: translateY(0);
 }
 
+.header-action:hover .header-tooltip,
+.header-action:focus-within .header-tooltip {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 .icon-send-button {
   flex: 0 0 auto;
   align-self: center;
