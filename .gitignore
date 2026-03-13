@@ -1,0 +1,34 @@
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.env
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+frontend/node_modules/
+mcp-server-abs/node_modules/
+
+# Build output
+dist/
+build/
+frontend/dist/
+mcp-server-abs/frontend/dist/
+
+# Runtime / local state
+runtime/
+mcp-server-abs/runtime/
+*.log
+
+# Editor
+.idea/
+.vscode/
