@@ -73,8 +73,8 @@ body {
 .product-subtitle-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
   min-width: 0;
+  color: rgba(30, 43, 33, 0.62);
 }
 
 .product-title h1 {
@@ -87,7 +87,7 @@ body {
 
 .product-title span {
   font-size: 0.86rem;
-  color: rgba(30, 43, 33, 0.62);
+  color: inherit;
   line-height: 1.1;
 }
 
@@ -772,26 +772,6 @@ body {
   align-items: center;
 }
 
-.info-action .header-icon-button {
-  width: 1.1rem;
-  height: 1.1rem;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  align-self: center;
-  margin-top: 0;
-}
-
-.info-action .header-icon-button:hover {
-  background: rgba(35, 66, 51, 0.06);
-}
-
-.info-action .header-icon-button svg {
-  width: 0.82rem;
-  height: 0.82rem;
-  display: block;
-}
-
 .header-icon-button {
   flex: 0 0 auto;
   display: inline-flex;
@@ -817,6 +797,14 @@ body {
   transform: none;
 }
 
+.subtitle-info-trigger {
+  display: inline-block;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.14em;
+  cursor: default;
+}
+
 .header-tooltip {
   position: absolute;
   right: 0;
@@ -839,20 +827,26 @@ body {
 .info-tooltip {
   left: 0;
   right: auto;
-  width: min(22rem, 80vw);
+  width: min(28rem, 86vw);
   white-space: normal;
   padding: 0.75rem 0.85rem;
   display: grid;
   gap: 0.5rem;
   line-height: 1.35;
+  color: #f8f4eb;
 }
 
 .info-tooltip p {
   margin: 0;
+  color: inherit;
 }
 
 .info-tooltip a {
-  color: #f8f4eb;
+  color: inherit;
+}
+
+.info-tooltip * {
+  color: inherit;
 }
 
 .header-action:hover .header-tooltip,

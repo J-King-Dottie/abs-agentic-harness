@@ -788,35 +788,27 @@ function ProductTitle() {
     <div className="product-title">
       <div className="product-title-text">
         <div className="product-title-main">
-          <h1>Ni-SA-ba</h1>
+          <h1>Nisaba</h1>
         </div>
         <div className="product-subtitle-group">
-          <span>an AI economic analyst</span>
           <div className="header-action info-action">
-            <button
-              type="button"
-              className="header-icon-button"
-              aria-label="About this tool"
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="10" fill="currentColor" />
-                <rect x="11" y="10" width="2" height="7" rx="1" fill="#f7f3ea" />
-                <circle cx="12" cy="7.25" r="1.2" fill="#f7f3ea" />
-              </svg>
-            </button>
+            <span className="subtitle-info-trigger">an AI economic analyst ?</span>
             <div className="header-tooltip info-tooltip" role="tooltip">
               <p>
-                In Sumerian mythology, Nisaba was the goddess of writing,
-                accounting, and administrative record-keeping. Scribe of the gods,
-                keeper of the ledger. One of the oldest named deities in human history.
+                Pronounced ni-SA-ba.
               </p>
               <p>
-                She tracked what came in, what went out, and what was owed. Writing
-                itself emerged in Mesopotamian bureaucracies to count what mattered -
+                In Sumerian mythology, Nisaba was the goddess of writing, accounting,
+                and administrative record-keeping.
+              </p>
+              <p>
+                Writing itself emerged in Mesopotamian bureaucracies to count what mattered -
                 grain rations, livestock, labour allocations, tax obligations.
               </p>
               <p>
                 Your Nisaba does the same. She has command of the full ABS economic dataset.
+              </p>
+              <p>
                 Ask her anything about the Australian economy and she'll pull the numbers,
                 run the calculations, and show you exactly what they say.
               </p>
