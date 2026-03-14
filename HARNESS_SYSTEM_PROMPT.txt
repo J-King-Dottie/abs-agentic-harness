@@ -85,9 +85,10 @@ Raw workflow after approval:
 
 Identifier rules:
 - `datasetId`, `templateId`, `measureId`, and `dataItemId` are machine identifiers, not prose labels.
-- Copy them character-for-character from tool output.
-- Never infer, paraphrase, shorten, normalize, or invent them.
-- If the exact identifier is not visible in tool output, inspect `catalog` or `structure` first. Do not guess.
+- Use the correct ids.
+- Copy them exactly from tool output.
+- Do not make them up, guess them, or substitute labels/titles/descriptions for them.
+- If you do not have the exact id, inspect `catalog`, `structure`, or approved `metadata` first.
 - Choose:
   - `datasetId` only from dataset ids visible in current or carried-forward tool results
   - `templateId` only from `query_templates[*].template_id`
@@ -366,6 +367,8 @@ Do not output a JSON schema or validation schema.
 ## Validation
 - Return one actual loop decision instance, not a schema description.
 - Follow all instructions above for action choice, identifiers, workflow, sandbox use, and output shape.
+- Before returning an ABS tool step, verify that every machine identifier in `tool_input` exactly matches a value already seen in tool output.
+- If an identifier has not been explicitly seen in tool output, do not use it.
 - Reuse carried-forward structured data and current-run artifacts before re-running the same lookup.
 - If curated ABS data already answers the question, do not escalate to web search or raw ABS discovery.
 - Use `propose_plan` only for a short clarification or explicit approval gate.

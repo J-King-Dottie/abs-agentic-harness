@@ -132,6 +132,23 @@ def _snapshot_from_state(state) -> ConversationSnapshot:
     )
 
 
+def _normalize_stale_processing_state(state) -> bool:
+    if str(state.run_status or "").strip() != "processing":
+        return False
+    active_run_id = str(state.active_run_id or "").strip()
+    if active_run_id and state.conversation_id in _RUN_TASKS:
+        return False
+
+    state.run_status = "completed" if _filtered_messages(state) else "idle"
+    state.latest_progress = ""
+    state.latest_error = ""
+    state.active_run_id = None
+    state.active_run_message_count = None
+    state.active_run_loop_count = None
+    state.active_run_artifact_count = None
+    return True
+
+
 def _rollback_unfinished_run(state) -> None:
     if isinstance(state.active_run_message_count, int):
         state.messages = state.messages[: state.active_run_message_count]
@@ -225,6 +242,8 @@ async def chat(request: ChatRequest):
     )
 
     state = store.load(request.conversation_id)
+    if _normalize_stale_processing_state(state):
+        store.save(state)
     if state.run_status == "processing":
         return ChatAcceptedResponse(
             conversation_id=request.conversation_id,
@@ -261,6 +280,8 @@ async def chat(request: ChatRequest):
 @app.get("/api/conversation/{conversation_id}", response_model=ConversationSnapshot)
 async def get_conversation(conversation_id: str):
     state = store.load(conversation_id)
+    if _normalize_stale_processing_state(state):
+        store.save(state)
     return _snapshot_from_state(state)
 
 

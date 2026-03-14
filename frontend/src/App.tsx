@@ -794,6 +794,32 @@ function applyConversationSnapshot(
   );
 }
 
+function upsertProgressMessage(
+  setMessages: Dispatch<SetStateAction<ChatMessage[]>>,
+  assistantMessageId: string,
+  content: string
+) {
+  setMessages((prev) => {
+    const next = [...prev];
+    const assistantIndex = next.findIndex((msg) => msg.id === assistantMessageId);
+    const insertionIndex = assistantIndex === -1 ? next.length : assistantIndex;
+    const lastBeforeAssistant =
+      insertionIndex > 0 ? next[insertionIndex - 1] : null;
+
+    if (lastBeforeAssistant?.sender === "progress") {
+      next[insertionIndex - 1] = { ...lastBeforeAssistant, content };
+      return next;
+    }
+
+    next.splice(insertionIndex, 0, {
+      id: createConversationId(),
+      sender: "progress",
+      content,
+    });
+    return next;
+  });
+}
+
 function ProductTitle() {
   return (
     <div className="product-title">
@@ -1152,18 +1178,7 @@ function App() {
       const initialProgress = simplifyStatusMessage(String(payload.latest_progress ?? ""));
       if (initialProgress && initialProgress !== lastProgressRef.current) {
         lastProgressRef.current = initialProgress;
-        const progressMessage: ChatMessage = {
-          id: createConversationId(),
-          sender: "progress",
-          content: initialProgress,
-        };
-        setMessages((prev) => {
-          const next = [...prev];
-          const assistantIndex = next.findIndex((msg) => msg.id === assistantMessage.id);
-          const insertionIndex = assistantIndex === -1 ? next.length : assistantIndex;
-          next.splice(insertionIndex, 0, progressMessage);
-          return next;
-        });
+        upsertProgressMessage(setMessages, assistantMessage.id, initialProgress);
       }
     } catch (err) {
       console.error(err);
@@ -1209,18 +1224,7 @@ function App() {
 
         if (latestProgress && latestProgress !== lastProgressRef.current) {
           lastProgressRef.current = latestProgress;
-          const progressMessage: ChatMessage = {
-            id: createConversationId(),
-            sender: "progress",
-            content: latestProgress,
-          };
-          setMessages((prev) => {
-            const next = [...prev];
-            const assistantIndex = next.findIndex((msg) => msg.id === assistantMessageId);
-            const insertionIndex = assistantIndex === -1 ? next.length : assistantIndex;
-            next.splice(insertionIndex, 0, progressMessage);
-            return next;
-          });
+          upsertProgressMessage(setMessages, assistantMessageId, latestProgress);
         }
 
         if (runStatus === "completed") {

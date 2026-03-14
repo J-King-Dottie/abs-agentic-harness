@@ -97,8 +97,7 @@ def main() -> int:
         [
             sys.executable,
             "-m",
-            "uvicorn",
-            "backend.app.main:app",
+            "backend.app.serve",
             "--host",
             args.host,
             "--port",

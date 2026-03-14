@@ -96,4 +96,4 @@ if ($OpenBrowser) {
     Start-Process $Url | Out-Null
 }
 
-& $PythonExe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 3000
+& $PythonExe -m backend.app.serve --host 127.0.0.1 --port 3000

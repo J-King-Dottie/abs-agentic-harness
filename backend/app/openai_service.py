@@ -636,6 +636,34 @@ def _resolve_curated_dataset_id(dataset_id: str) -> str:
         return alias_hit
 
     candidates = list_curated_datasets()
+    normalized_compact = normalized.replace("_", "")
+    for entry in candidates:
+        if not isinstance(entry, dict):
+            continue
+        candidate_id = str(entry.get("dataset_id") or "").strip()
+        candidate_title = str(entry.get("title") or "").strip()
+        candidate_id_normalized = _normalize_dataset_hint(candidate_id)
+        candidate_title_normalized = _normalize_dataset_hint(candidate_title)
+        if normalized == candidate_id_normalized or normalized == candidate_title_normalized:
+            if candidate_id:
+                logger.info(
+                    "Resolved curated dataset exact-normalized requested=%s resolved=%s",
+                    raw,
+                    candidate_id,
+                )
+                return candidate_id
+        if normalized_compact and (
+            normalized_compact == candidate_id_normalized.replace("_", "")
+            or normalized_compact == candidate_title_normalized.replace("_", "")
+        ):
+            if candidate_id:
+                logger.info(
+                    "Resolved curated dataset compact-normalized requested=%s resolved=%s",
+                    raw,
+                    candidate_id,
+                )
+                return candidate_id
+
     best_entry = None
     best_score = 0
     search_query = normalized.replace("_", " ")
@@ -671,7 +699,8 @@ def _load_curated_entry(dataset_id: str) -> Dict[str, Any]:
     if entry is None:
         available = ", ".join(str(item.get("dataset_id") or "") for item in list_curated_datasets())
         raise RuntimeError(
-            f"Unknown curated datasetId '{dataset_id}'. Available dataset ids: {available}"
+            f"Unknown curated datasetId '{dataset_id}'. Use catalog first or copy datasetId exactly from tool output. "
+            f"Available dataset ids: {available}"
         )
     return entry
 
@@ -2115,6 +2144,9 @@ def generate_response(
         def persist_completed_turn(assistant_content: str) -> None:
             state.messages.append({"role": "user", "content": user_content})
             state.messages.append({"role": "assistant", "content": assistant_content})
+            state.active_run_message_count = len(state.messages)
+            state.active_run_loop_count = len(state.loop_history)
+            state.active_run_artifact_count = len(state.artifacts)
             store.save(state)
 
         active_user_message = user_content
@@ -2202,7 +2234,6 @@ def generate_response(
 
         for loop_index in range(1, settings.max_loops + 1):
             _ensure_not_cancelled(conversation_id, cancel_event, f"loop_{loop_index}_start")
-            status_callback(f"Loop {loop_index}: reasoning about the next step.")
 
             payload_loop_history, protected_loop_history_count = _payload_loop_history(
                 state,
@@ -2333,7 +2364,8 @@ def generate_response(
                     _summarize_tool_input(model_output.get("tool_input") if isinstance(model_output, dict) else {}),
                 )
 
-            status_callback(progress_note)
+            if step["id"] not in {"propose_plan", "compose_final"}:
+                status_callback(progress_note)
             _ensure_not_cancelled(conversation_id, cancel_event, f"loop_{loop_index}_after_parse")
 
             if step["id"] == "propose_plan":
