@@ -175,6 +175,26 @@ def _extract_json_candidate(raw_text: str) -> str:
     if direct:
         return direct
 
+    # Recover from leading prose, markdown labels, or other wrapper text by
+    # scanning for the first decodable JSON object start.
+    for match in re.finditer(r"\{", text):
+        candidate = _decode_first_json_object(text[match.start() :])
+        if candidate:
+            return candidate
+
+    # Also tolerate quoted JSON objects embedded in surrounding text.
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r'"', text):
+        snippet = text[match.start() :]
+        try:
+            decoded, end_index = decoder.raw_decode(snippet)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(decoded, str):
+            nested = _decode_first_json_object(decoded)
+            if nested:
+                return nested
+
     raise HarnessParserError("No JSON object found in model output.")
 
 

@@ -665,7 +665,7 @@
         "data_items": [
           {
             "data_item_id": "GPM",
-            "description": "Gross domestic product (GDP), the overall production-side total. Wildcard retrieval returns quarterly Australia-only series. Sector coverage includes all sectors and ownership of dwellings. Available as chain volume levels, chain volume percentage changes, chain volume revisions to percentage changes, and contributions to growth. Original, seasonally adjusted and trend series are available. Industry breakdown covers TOTAL plus ANZSIC divisions A-S."
+            "description": "Gross domestic product (GDP), the overall production-side total. Wildcard retrieval returns quarterly Australia-only series. Sector coverage includes all sectors and ownership of dwellings. Available as chain volume levels, chain volume percentage changes, chain volume revisions to percentage changes, and contributions to growth. Original, seasonally adjusted and trend series are available. Industry breakdown covers TOTAL plus ANZSIC divisions A-S. For this industry panel, trend chain-volume series are materially older than the newer seasonally adjusted and original series, so latest-available growth questions should prefer the newest comparable published series rather than defaulting to trend."
           },
           {
             "data_item_id": "GPM_AGR",
@@ -1009,6 +1009,349 @@
       }
     ]
   },
+  {
+  "dataset_id": "LF",
+  "title": "Labour Force",
+  "data_shape": "panel",
+  "query_templates": [
+    {
+      "template_id": "measure_wildcard",
+      "instructions": "Choose a Labour Force measure id, then use the wildcard API call for that measure.",
+      "api_structure": "measure + wildcard api call",
+      "api_call": "/rest/data/ABS,LF,1.0.0/{MEASURE}.....M?detail=full&dimensionAtObservation=TIME_PERIOD",
+      "measures": [
+        {
+          "measure_id": "M1",
+          "description": "Employed - full-time. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M2",
+          "description": "Employed - part-time. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M3",
+          "description": "Employed persons. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M4",
+          "description": "Unemployed - looking for full-time work. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M5",
+          "description": "Unemployed - looking for part-time work. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M6",
+          "description": "Unemployed persons. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M9",
+          "description": "Labour Force. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M10",
+          "description": "Not in the Labour Force. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns; adjustment availability varies by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M11",
+          "description": "Civilian population. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns; adjustment availability varies by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M12",
+          "description": "Participation rate. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M13",
+          "description": "Unemployment rate. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M14",
+          "description": "Unemployment rate - looking for full-time work. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M15",
+          "description": "Unemployment rate - looking for part-time work. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M16",
+          "description": "Employment to population ratio. Monthly headline labour-force series for Australia and the states. Supports sex breakdowns and standard labour-force adjustment variants; inspect returned rows at runtime for exact published combinations."
+        }
+      ]
+    }
+  ]
+},
+  {
+  "dataset_id": "LF_AGES",
+  "title": "Labour Force: Age Groups",
+  "data_shape": "panel",
+  "query_templates": [
+    {
+      "template_id": "measure_wildcard",
+      "instructions": "Choose a Labour Force age-groups measure id, then use the wildcard API call for that measure.",
+      "api_structure": "measure + wildcard api call",
+      "api_call": "/rest/data/ABS,LF_AGES,1.0.0/{MEASURE}.....M?detail=full&dimensionAtObservation=TIME_PERIOD",
+      "measures": [
+        {
+          "measure_id": "M1",
+          "description": "Employed - full-time. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M2",
+          "description": "Employed - part-time. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M3",
+          "description": "Employed persons. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M4",
+          "description": "Unemployed - looking for full-time work. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M5",
+          "description": "Unemployed - looking for part-time work. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M6",
+          "description": "Unemployed persons. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M9",
+          "description": "Labour Force. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M10",
+          "description": "Not in the Labour Force. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M11",
+          "description": "Civilian population. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M12",
+          "description": "Participation rate. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M13",
+          "description": "Unemployment rate. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M14",
+          "description": "Unemployment rate - looking for full-time work. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M15",
+          "description": "Unemployment rate - looking for part-time work. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M16",
+          "description": "Employment to population ratio. Monthly labour-force age-group series with age and sex breakdowns. These series are Australia-focused, and adjustment availability varies by measure; inspect returned rows at runtime for exact published combinations."
+        }
+      ]
+    }
+  ]
+},
+  {
+  "dataset_id": "LF_EDU",
+  "title": "Labour Force Educational Attendance",
+  "data_shape": "panel",
+  "query_templates": [
+    {
+      "template_id": "measure_wildcard",
+      "instructions": "Choose a Labour Force educational-attendance measure id, then use the wildcard API call for that measure.",
+      "api_structure": "measure + wildcard api call",
+      "api_call": "/rest/data/ABS,LF_EDU,1.0.0/{MEASURE}.....M?detail=full&dimensionAtObservation=TIME_PERIOD",
+      "measures": [
+        {
+          "measure_id": "M1",
+          "description": "Employed - full-time. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M2",
+          "description": "Employed - part-time. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M3",
+          "description": "Employed persons. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M6",
+          "description": "Unemployed persons. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M9",
+          "description": "Labour Force. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M10",
+          "description": "Not in the Labour Force. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M11",
+          "description": "Civilian population. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M12",
+          "description": "Participation rate. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M13",
+          "description": "Unemployment rate. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M16",
+          "description": "Employment to population ratio. Monthly labour-force educational-attendance series with age, sex and education breakdowns. Geography and published combinations should be inspected at runtime before narrowing or calculation."
+        }
+      ]
+    }
+  ]
+},
+  {
+  "dataset_id": "LF_HOURS",
+  "title": "Labour Force: Hours worked by sector",
+  "data_shape": "panel",
+  "query_templates": [
+    {
+      "template_id": "measure_wildcard",
+      "instructions": "Choose a Labour Force hours-worked measure id, then use the wildcard API call for that measure.",
+      "api_structure": "measure + wildcard api call",
+      "api_call": "/rest/data/ABS,LF_HOURS,1.0.0/{MEASURE}......M?detail=full&dimensionAtObservation=TIME_PERIOD",
+      "measures": [
+        {
+          "measure_id": "M18",
+          "description": "Employed Persons - Monthly hours worked in all jobs. Monthly labour-force hours-worked series with sex, geography and hours/sector breakdowns. Published combinations vary by measure and should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M19",
+          "description": "Full-time Employed - Monthly hours worked in all jobs. Monthly labour-force hours-worked series with sex, geography and hours/sector breakdowns. Published combinations vary by measure and should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M20",
+          "description": "Part-time Employed - Monthly hours worked in all jobs. Monthly labour-force hours-worked series with sex, geography and hours/sector breakdowns. Published combinations vary by measure and should be inspected at runtime before narrowing or calculation."
+        },
+        {
+          "measure_id": "M32",
+          "description": "Hours worked by sector. Monthly labour-force hours-worked series with sex, geography and hours/sector breakdowns. Published combinations vary by measure and should be inspected at runtime before narrowing or calculation."
+        }
+      ]
+    }
+  ]
+},
+  {
+  "dataset_id": "LF_UNDER",
+  "title": "Labour force - underemployment and underutilisation",
+  "data_shape": "panel",
+  "query_templates": [
+    {
+      "template_id": "measure_wildcard",
+      "instructions": "Choose an underemployment or underutilisation measure id, then use the wildcard API call for that measure.",
+      "api_structure": "measure + wildcard api call",
+      "api_call": "/rest/data/ABS,LF_UNDER,1.0.1/{MEASURE}.....M?detail=full&dimensionAtObservation=TIME_PERIOD",
+      "measures": [
+        {
+          "measure_id": "M1",
+          "description": "Employed - full-time. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M2",
+          "description": "Employed - part-time. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M3",
+          "description": "Employed persons. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M4",
+          "description": "Unemployed - looking for full-time work. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M5",
+          "description": "Unemployed - looking for part-time work. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M6",
+          "description": "Unemployed persons. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M9",
+          "description": "Labour Force. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M10",
+          "description": "Not in the Labour Force. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M11",
+          "description": "Civilian population. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M12",
+          "description": "Participation rate. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M13",
+          "description": "Unemployment rate. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M14",
+          "description": "Unemployment rate - looking for full-time work. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M15",
+          "description": "Unemployment rate - looking for part-time work. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M16",
+          "description": "Employment to population ratio. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M21",
+          "description": "Underemployed total. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M22",
+          "description": "Underemployment ratio (proportion of employed). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M23",
+          "description": "Underemployment rate (proportion of labour force). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M24",
+          "description": "Underutilisation rate. Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M25",
+          "description": "Underemployed full-time (worked part-time for economic reasons). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M26",
+          "description": "Underemployed part-time (prefer more hours). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M27",
+          "description": "Underemployed full-time (expanded analytical series). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M28",
+          "description": "Underemployed part-time (expanded analytical series). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M29",
+          "description": "Underemployed total (expanded analytical series). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M30",
+          "description": "Underemployed full-time (prefer more hours). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        },
+        {
+          "measure_id": "M31",
+          "description": "Underemployed part-time (worked less than usual hours for economic reasons). Monthly labour-force underemployment and underutilisation series with age and sex breakdowns. Geography and adjustment availability vary by measure, so inspect returned rows at runtime for exact published combinations."
+        }
+      ]
+    }
+  ]
+},
   {
     "dataset_id": "ABS_SU_TABLE_2024",
     "title": "Supply Use Table, 2023-24",

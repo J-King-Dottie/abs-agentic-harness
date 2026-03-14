@@ -44,7 +44,7 @@ Use whichever one matches the user-meaningful concept better.
 - sector coverage actually returned
 - adjustment types actually returned
 - measure forms actually returned
-9. Write concise descriptions that say what the metric is first, then what the wildcard retrieval actually contains.
+9. Write concise high-level descriptions that say what the metric is first, then what the wildcard retrieval broadly contains.
 
 ## Description rules
 
@@ -54,6 +54,17 @@ Use whichever one matches the user-meaningful concept better.
 - Prefer direct plain-English metric descriptions over generic labels.
 - If an item is industry gross value added, say that directly.
 - If an item is a ratio, index, percentage change, or contribution series, say that directly.
+- Do not write descriptions as a report of the test path you used to verify the data.
+- Avoid phrases like `validated starter slice`, `starter curated measure`, `the validated slice uses`, or other validation-process language in the final curated text.
+- State the observed availability directly.
+- If you used one sample key to verify the dataset, do not imply that sample is the only available slice unless the published data actually shows that limit.
+- Do not turn a small wildcard inspection sample such as `firstNObservations=5` into a narrow availability claim unless that narrower limit has been confirmed more fully.
+- Keep curated descriptions high level.
+- Do not try to encode the full combination map into the curated text.
+- Use the curated text to signal broad capability and major caveats only.
+- Use small wildcard samples to confirm broad capability and obvious major caveats, not to over-specify exact measure-level combination limits in the curated text.
+- When in doubt, keep the curated description broader and let runtime inspection determine the exact published combinations before narrowing or calculation.
+- Expect the harness to inspect returned wildcard rows or series keys at runtime to understand actual combination availability before narrowing or calculation.
 
 ## Overlay writing rules
 

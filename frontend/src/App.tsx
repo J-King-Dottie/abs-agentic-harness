@@ -38,7 +38,7 @@ const MAX_POLL_FAILURES = 20;
 const EXAMPLE_PROMPTS = [
   "What data do you have access to?",
   "Show me a chart of Manufacturing jobs over the last 2 decades?",
-  "Show me which states had the highest 5 year growth in private investment (gross fixed capital formation).",
+  "Which industry had the largest 5 year growth in gross value added?",
 ];
 
 function createConversationId() {
@@ -830,9 +830,6 @@ function ProductTitle() {
                 </svg>
                 <div className="header-tooltip info-tooltip" role="tooltip">
                   <p>
-                    Pronounced ni-SA-ba.
-                  </p>
-                  <p>
                     In Sumerian mythology, Nisaba was the goddess of writing, accounting,
                     and administrative record-keeping.
                   </p>
@@ -1006,7 +1003,6 @@ function App() {
 
     let active = true;
     hydratedConversationRef.current = conversationId;
-    setMessages([]);
     setIsStreaming(false);
     pendingRef.current = null;
     lastProgressRef.current = "";
@@ -1028,7 +1024,6 @@ function App() {
           pendingRef.current = null;
           lastProgressRef.current = "";
           setIsStreaming(false);
-          setMessages([]);
           void fetch(`${API_BASE}/api/cancel`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -1381,7 +1376,7 @@ function App() {
                 </div>
                 <div className="empty-state-note-group">
                   <p>It handles targeted data retrieval well. Complex layered questions can still trip it up.</p>
-                  <p>For multi-dataset calculations, break tasks down and guide it step by step for better performance.</p>
+                  <p>Break complex tasks down and guide it step by step for better performance.</p>
                 </div>
               </div>
               <div className="empty-state-prompts">

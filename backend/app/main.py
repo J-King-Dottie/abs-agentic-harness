@@ -273,7 +273,7 @@ async def chat(request: ChatRequest):
     return ChatAcceptedResponse(
         conversation_id=request.conversation_id,
         run_status="processing",
-        latest_progress=state.latest_progress,
+        latest_progress=state.latest_progress or "Starting analysis",
     )
 
 

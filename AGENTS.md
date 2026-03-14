@@ -129,7 +129,7 @@ Required process:
 2. Inspect the returned series keys or MCP availability output.
 3. Identify which dimensions actually vary in published data and which are fixed.
 4. Check whether important dimension combinations are constrained, even when the broad dimension appears available.
-5. Update the measure description to describe observed availability only.
+5. Update the description to reflect the high-level observed availability only.
 
 At minimum, check and describe:
 
@@ -142,7 +142,16 @@ At minimum, check and describe:
 
 Do not describe dimensions as available just because they exist in metadata or codelists.
 If metadata suggests broader coverage but the published series are narrower, say that explicitly in the dataset or measure description.
-If a dimension is only available for some combinations, say that explicitly in the description instead of implying the dimension is broadly usable.
+Do not try to encode the full combination map into the curated description.
+Combination awareness belongs primarily to runtime inspection of the returned wildcard data.
+Only mention a combination limit in the curated description when it is a major high-level caveat needed to avoid obvious misuse.
+Do not write descriptions as a narrative of the validation sample you happened to test.
+Do not use wording like `validated starter slice`, `starter curated measure`, `the validated slice uses`, or similar process language inside curated descriptions.
+Descriptions should state observed availability directly, for example `varies by age group and educational attendance status`, not `the validated slice focused on age 15-24`.
+Only mention narrower limits when they are real observed limits of the published data, not just the subset used for verification.
+Do not turn a small wildcard inspection sample such as `firstNObservations=5` into a narrow availability claim unless that narrower limit has been confirmed more fully.
+Use small wildcard samples to confirm broad capability and obvious major caveats, not to over-specify exact measure-level combination limits in the curated text.
+When in doubt, keep the curated description broader and let runtime inspection determine the exact published combinations before narrowing or calculation.
 
 ## Mandatory backend compatibility check for new curated schemas
 
@@ -229,7 +238,7 @@ When curating a new ABS dataset, use this sequence:
 6. Run the live wildcard retrieval for each anchored item.
 7. Inspect what the published data literally returns.
 8. Inspect whether important dimension combinations are narrower than the broad wildcard result.
-9. Write the catalog and structure descriptions from observed availability, not from metadata alone.
+9. Write the catalog and structure descriptions from observed availability, not from metadata alone, but keep them high level rather than enumerating detailed combination rules.
 10. Verify the backend can actually execute that template shape.
 11. Only then treat the dataset as curated.
 
@@ -265,7 +274,7 @@ This field should help the harness reason about:
 
 ## What descriptions must say
 
-Descriptions should help the harness plan valid analysis before retrieval.
+Descriptions should help the harness choose the right dataset and plan valid retrieval at a high level before runtime inspection.
 
 At minimum, descriptions should say what is literally available for the anchored item:
 
@@ -275,7 +284,7 @@ At minimum, descriptions should say what is literally available for the anchored
 - sector coverage actually returned
 - adjustment types actually returned
 - measure forms actually returned, for example current prices, chain volume, percentage changes, contributions
-- important combination limits, when a dimension is available only for some variants
+- major high-level caveats that materially affect dataset choice or likely comparability
 
 Descriptions should be written to support questions like:
 
@@ -285,12 +294,20 @@ Descriptions should be written to support questions like:
 
 Descriptions should stay compact.
 Do not try to list every returned series key or every code combination.
-Instead, state the broad observed availability first, then add one short caveat sentence when combinations are narrower than they first appear.
+Do not try to encode the full combination logic in the curated files.
+Instead, state the broad observed availability first, then add one short caveat sentence only when a major high-level limit matters.
+Do not mix curation-process commentary into the final description text.
+Do not let a lightweight validation sample make the description more specific than the evidence supports.
+
+Runtime rule:
+- The curated files are for high-level capability guidance.
+- The harness should learn actual combination availability at runtime by inspecting returned wildcard rows or series keys before narrowing and calculation.
+- Do not rely on the curated descriptions alone for cross-combination assumptions.
 
 Preferred pattern:
 
 - one sentence on the broad observed availability
-- one sentence on the most important combination caveat
+- one sentence on the most important high-level caveat
 - one sentence on frequency or adjustment availability if needed
 
 Example:

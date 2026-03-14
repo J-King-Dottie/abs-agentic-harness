@@ -724,7 +724,7 @@ body {
   max-height: 10rem;
   overflow-y: auto;
   line-height: 1.35;
-  padding: 0.78rem 0.2rem;
+  padding: 1rem 0.2rem 1rem 1.05rem;
   font: inherit;
   color: inherit;
 }
@@ -1015,10 +1015,14 @@ body {
   }
 
   .info-tooltip {
-    left: 0;
-    right: auto;
-    width: min(20rem, calc(100vw - (2 * var(--page-gutter))));
-    max-width: calc(100vw - (2 * var(--page-gutter)));
+    position: fixed;
+    left: var(--page-gutter);
+    right: var(--page-gutter);
+    top: calc(env(safe-area-inset-top, 0px) + 4.35rem);
+    width: auto;
+    max-width: none;
+    max-height: min(70vh, 34rem);
+    overflow-y: auto;
     overflow-wrap: anywhere;
   }
 
@@ -1033,7 +1037,7 @@ body {
 
   .composer textarea {
     min-height: 2.8rem;
-    padding: 0.72rem 0.16rem;
+    padding: 1rem 0.16rem 1rem 1.05rem;
   }
 
   .icon-send-button {

@@ -36,6 +36,36 @@
     "description": "Quarterly ABS income-side national accounts data covering compensation of employees, gross operating surplus, gross mixed income, taxes less subsidies on production and imports, and GDP. In the currently published wildcard availability, AUS is the only observed region value and Q is the only observed frequency, while the dataset varies by measure, data item, sector, and adjustment type."
   },
   {
+    "dataset_id": "LF",
+    "title": "Labour Force",
+    "data_shape": "panel",
+    "description": "Monthly ABS Labour Force Survey headline measures such as employment, unemployment, participation and unemployment rate. Observed geography includes Australia and states 1-8, frequency is monthly only, and the verified starter measures are available with Total age, sex values Persons/Males/Females, and adjustment types Original, Seasonally Adjusted, and Trend."
+  },
+  {
+    "dataset_id": "LF_AGES",
+    "title": "Labour Force: Age Groups",
+    "data_shape": "panel",
+    "description": "Monthly ABS Labour Force Survey age-group variant. Verified availability shows monthly Australia-level series varying across multiple labour-force age groups, with sex values Persons/Males/Females and adjustment types Original, Seasonally Adjusted, and Trend."
+  },
+  {
+    "dataset_id": "LF_EDU",
+    "title": "Labour Force Educational Attendance",
+    "data_shape": "panel",
+    "description": "Monthly ABS Labour Force Survey educational-attendance variant. Observed geography includes Australia and states 1-8, frequency is monthly only, and the dataset varies by age group, educational attendance status, and sex."
+  },
+  {
+    "dataset_id": "LF_HOURS",
+    "title": "Labour Force: Hours worked by sector",
+    "data_shape": "panel",
+    "description": "Monthly ABS Labour Force Survey hours-worked-by-sector variant. Observed geography includes Australia and states 1-8, frequency is monthly only, and the dataset varies by a labour-force hours/sector dimension that includes Industry Total and broad industry-style sector groupings such as Market, Agriculture, Education and Training, and other broad aggregates."
+  },
+  {
+    "dataset_id": "LF_UNDER",
+    "title": "Labour force - underemployment and underutilisation",
+    "data_shape": "panel",
+    "description": "Monthly ABS Labour Force Survey underemployment and underutilisation variant. Observed geography includes Australia and states 1-8, frequency is monthly only, age varies across Total and multiple age groups, sex includes persons, males and females, and adjustment types include original, seasonally adjusted and trend."
+  },
+  {
     "dataset_id": "ABS_SU_TABLE_2024",
     "title": "Supply Use Table, 2023-24",
     "data_shape": "matrix",
