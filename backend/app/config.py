@@ -17,7 +17,7 @@ load_dotenv(ENV_PATH)
 class Settings(BaseModel):
     openai_api_key: str
     openai_model: str = "gpt-5.4"
-    openai_reasoning_effort: str = "low"
+    openai_reasoning_effort: str = "medium"
     node_binary: str = "node"
     python_binary: str = "python3"
     mcp_bridge_path: Path = BASE_DIR / "build" / "mcpBridge.js"

@@ -15,6 +15,7 @@ interface ChatMessage {
 
 interface PendingMessage {
   id: string;
+  userId: string;
 }
 
 interface ConversationSnapshotResponse {
@@ -696,19 +697,7 @@ function loadSavedSession() {
       typeof parsed.conversationId === "string" && parsed.conversationId.trim()
         ? parsed.conversationId
         : createConversationId();
-    const messages = Array.isArray(parsed.messages)
-      ? parsed.messages.filter(
-          (message): message is ChatMessage =>
-            !!message &&
-            typeof message === "object" &&
-            typeof (message as ChatMessage).id === "string" &&
-            ((message as ChatMessage).sender === "user" ||
-              (message as ChatMessage).sender === "assistant" ||
-              (message as ChatMessage).sender === "progress") &&
-            typeof (message as ChatMessage).content === "string"
-        )
-      : [];
-    return { conversationId, messages };
+    return { conversationId, messages: [] as ChatMessage[] };
   } catch {
     return null;
   }
@@ -741,16 +730,35 @@ function mapBackendMessages(rawMessages: unknown): ChatMessage[] {
   });
 }
 
+function keepCompletedTurns(messages: ChatMessage[]) {
+  const completed: ChatMessage[] = [];
+  let index = 0;
+  while (index + 1 < messages.length) {
+    const userMessage = messages[index];
+    const assistantMessage = messages[index + 1];
+    if (userMessage?.sender !== "user" || assistantMessage?.sender !== "assistant") {
+      index += 1;
+      continue;
+    }
+    completed.push(userMessage, assistantMessage);
+    index += 2;
+  }
+  return completed;
+}
+
 function applyConversationSnapshot(
   payload: ConversationSnapshotResponse,
   setMessages: Dispatch<SetStateAction<ChatMessage[]>>,
-  assistantMessageId?: string
+  assistantMessageId?: string,
+  forceReplace = false
 ) {
-  const restoredMessages = mapBackendMessages(payload.messages);
-  if (restoredMessages.length > 0) {
+  const runStatus = String(payload.run_status ?? "").trim().toLowerCase();
+  const mappedMessages = mapBackendMessages(payload.messages);
+  const restoredMessages = runStatus === "completed" ? mappedMessages : keepCompletedTurns(mappedMessages);
+  if (restoredMessages.length > 0 || forceReplace) {
     setMessages((prev) => {
       const progressMessages = prev.filter((message) => message.sender === "progress");
-      if (progressMessages.length === 0) {
+      if (progressMessages.length === 0 || forceReplace) {
         return restoredMessages;
       }
 
@@ -924,10 +932,50 @@ function App() {
       STORAGE_KEY,
       JSON.stringify({
         conversationId,
-        messages,
       })
     );
   }, [conversationId, messages]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !conversationId) {
+      return;
+    }
+
+    const cancelActiveRun = () => {
+      if (!pendingRef.current) {
+        return;
+      }
+      const payload = JSON.stringify({ conversation_id: conversationId });
+      const url = `${API_BASE}/api/cancel`;
+      try {
+        if (navigator.sendBeacon) {
+          const blob = new Blob([payload], { type: "application/json" });
+          navigator.sendBeacon(url, blob);
+          return;
+        }
+      } catch (cancelError) {
+        console.error("Failed to send cancellation beacon", cancelError);
+      }
+
+      void fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: payload,
+        keepalive: true,
+      }).catch((cancelError) => {
+        console.error("Failed to cancel active run", cancelError);
+      });
+    };
+
+    const handlePageHide = () => {
+      cancelActiveRun();
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     if (!authReady || !session || !conversationId) {
@@ -939,6 +987,10 @@ function App() {
 
     let active = true;
     hydratedConversationRef.current = conversationId;
+    setMessages([]);
+    setIsStreaming(false);
+    pendingRef.current = null;
+    lastProgressRef.current = "";
 
     void fetch(`${API_BASE}/api/conversation/${encodeURIComponent(conversationId)}`)
       .then(async (response) => {
@@ -951,18 +1003,37 @@ function App() {
         if (!active) {
           return;
         }
-        applyConversationSnapshot(payload, setMessages);
+        applyConversationSnapshot(payload, setMessages, undefined, true);
         const runStatus = String(payload.run_status ?? "");
         if (runStatus === "processing") {
-          const placeholderId = createConversationId();
-          setMessages((prev) =>
-            prev.some((message) => message.sender === "assistant" && !message.content)
-              ? prev
-              : [...prev, { id: placeholderId, sender: "assistant", content: "" }]
-          );
-          const resumedPending = { id: placeholderId };
-          pendingRef.current = resumedPending;
-          setIsStreaming(true);
+          pendingRef.current = null;
+          lastProgressRef.current = "";
+          setIsStreaming(false);
+          setMessages([]);
+          void fetch(`${API_BASE}/api/cancel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ conversation_id: conversationId }),
+            keepalive: true,
+          })
+            .then(() =>
+              fetch(`${API_BASE}/api/conversation/${encodeURIComponent(conversationId)}`)
+            )
+            .then(async (response) => {
+              if (!response.ok) {
+                throw new Error(`Failed to reload conversation: ${response.status}`);
+              }
+              return (await response.json()) as ConversationSnapshotResponse;
+            })
+            .then((cancelledPayload) => {
+              if (!active) {
+                return;
+              }
+              applyConversationSnapshot(cancelledPayload, setMessages, undefined, true);
+            })
+            .catch((cancelError) => {
+              console.error("Failed to cancel stale background run", cancelError);
+            });
         }
         const latestError = String(payload.latest_error ?? "").trim();
         if (latestError) {
@@ -1058,6 +1129,7 @@ function App() {
 
     const pendingState: PendingMessage = {
       id: assistantMessage.id,
+      userId: userMessage.id,
     };
     pendingRef.current = pendingState;
 

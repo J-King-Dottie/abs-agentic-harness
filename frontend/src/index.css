@@ -228,8 +228,8 @@ body {
 .empty-state-note {
   width: min(48rem, 100%);
   display: grid;
-  gap: 1.35rem;
-  color: rgba(30, 43, 33, 0.68);
+  gap: 0.35rem;
+  color: #1e2b21;
   line-height: 1.35;
   margin-bottom: 0.8rem;
 }

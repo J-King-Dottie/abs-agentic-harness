@@ -13,6 +13,16 @@ ALLOWED_STEP_IDS = {
     "compose_final",
 }
 
+DEFAULT_STRUCTURED_LIMIT_CHARS = 12000
+SANDBOX_STRUCTURED_LIMIT_CHARS = 120000
+DEFAULT_ARTIFACT_INLINE_LIMIT_CHARS = 4000
+SANDBOX_ARTIFACT_INLINE_LIMIT_CHARS = 120000
+
+
+def _is_sandbox_kind(kind: str) -> bool:
+    clean = str(kind or "").strip().lower()
+    return clean.startswith("sandbox")
+
 
 def _compact_structured_value(value: Any, *, limit_chars: int = 12000) -> Any:
     if not isinstance(value, (dict, list)):
@@ -48,6 +58,8 @@ def _load_artifact_inline_content(item: Dict[str, Any], *, limit_chars: int = 40
     if kind == "abs_resolved_dataset":
         return None
 
+    effective_limit = SANDBOX_ARTIFACT_INLINE_LIMIT_CHARS if _is_sandbox_kind(kind) else limit_chars
+
     path_value = str(item.get("path") or "").strip()
     if not path_value:
         return None
@@ -60,8 +72,8 @@ def _load_artifact_inline_content(item: Dict[str, Any], *, limit_chars: int = 40
     except Exception:
         return None
 
-    if len(raw) > limit_chars:
-        raw = raw[:limit_chars]
+    if len(raw) > effective_limit:
+        raw = raw[:effective_limit]
 
     stripped = raw.strip()
     if not stripped:
@@ -69,7 +81,7 @@ def _load_artifact_inline_content(item: Dict[str, Any], *, limit_chars: int = 40
 
     if path.suffix.lower() == ".json":
         try:
-            return _compact_structured_value(json.loads(stripped), limit_chars=limit_chars)
+            return _compact_structured_value(json.loads(stripped), limit_chars=effective_limit)
         except Exception:
             return stripped
     return stripped
@@ -87,10 +99,14 @@ def compact_loop_history(loops: List[Dict[str, Any]], limit: int = 8) -> List[Di
                 "summary": str(step.get("summary") or "").strip()[:160],
             },
             "progress_note": str(item.get("progress_note") or "").strip()[:120],
+            "handoff_summary": str(item.get("handoff_summary") or "").strip()[:1200],
             "result_summary": str(item.get("result_summary") or "").strip()[:2400],
         }
         if "result_data" in item:
-            compact_result = _compact_structured_value(item.get("result_data"), limit_chars=12000)
+            result_data = item.get("result_data")
+            result_kind = str(result_data.get("kind") or "").strip() if isinstance(result_data, dict) else ""
+            limit_chars = SANDBOX_STRUCTURED_LIMIT_CHARS if _is_sandbox_kind(result_kind) else DEFAULT_STRUCTURED_LIMIT_CHARS
+            compact_result = _compact_structured_value(result_data, limit_chars=limit_chars)
             if compact_result is not None:
                 entry["result_data"] = compact_result
         compact.append(entry)
@@ -149,7 +165,7 @@ def compact_artifacts(artifacts: List[Dict[str, Any]], limit: int = 8) -> List[D
             "label": str(item.get("label") or "").strip()[:120],
             "summary": str(item.get("summary") or "").strip()[:320],
         }
-        inline_content = _load_artifact_inline_content(item, limit_chars=4000)
+        inline_content = _load_artifact_inline_content(item, limit_chars=DEFAULT_ARTIFACT_INLINE_LIMIT_CHARS)
         if inline_content is not None:
             entry["content"] = inline_content
         compact.append(entry)

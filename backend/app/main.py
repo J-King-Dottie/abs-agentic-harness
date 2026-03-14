@@ -32,6 +32,10 @@ class ResetRequest(BaseModel):
     conversation_id: str = Field(..., description="Conversation to reset.")
 
 
+class CancelRequest(BaseModel):
+    conversation_id: str = Field(..., description="Conversation to cancel without clearing chat history.")
+
+
 class ConversationSnapshot(BaseModel):
     conversation_id: str
     messages: list[dict[str, str]]
@@ -128,6 +132,18 @@ def _snapshot_from_state(state) -> ConversationSnapshot:
     )
 
 
+def _rollback_unfinished_run(state) -> None:
+    if isinstance(state.active_run_message_count, int):
+        state.messages = state.messages[: state.active_run_message_count]
+    if isinstance(state.active_run_loop_count, int):
+        state.loop_history = state.loop_history[: state.active_run_loop_count]
+    if isinstance(state.active_run_artifact_count, int):
+        state.artifacts = state.artifacts[: state.active_run_artifact_count]
+    state.active_run_message_count = None
+    state.active_run_loop_count = None
+    state.active_run_artifact_count = None
+
+
 async def _run_generation_job(
     *,
     conversation_id: str,
@@ -154,6 +170,7 @@ async def _run_generation_job(
         logger.info("Conversation cancelled mid-generation cid=%s", conversation_id)
         state = store.load(conversation_id)
         if state.active_run_id == run_id:
+            _rollback_unfinished_run(state)
             state.run_status = "cancelled"
             state.latest_progress = ""
             state.latest_error = "Conversation cancelled by user."
@@ -171,6 +188,9 @@ async def _run_generation_job(
             state.latest_progress = ""
             state.latest_error = str(exc)
             state.active_run_id = None
+            state.active_run_message_count = None
+            state.active_run_loop_count = None
+            state.active_run_artifact_count = None
             store.save(state)
     else:
         logger.info(
@@ -184,6 +204,9 @@ async def _run_generation_job(
             state.latest_progress = ""
             state.latest_error = ""
             state.active_run_id = None
+            state.active_run_message_count = None
+            state.active_run_loop_count = None
+            state.active_run_artifact_count = None
             store.save(state)
     finally:
         _RUN_TASKS.pop(conversation_id, None)
@@ -211,9 +234,12 @@ async def chat(request: ChatRequest):
 
     run_id = secrets.token_hex(8)
     state.run_status = "processing"
-    state.latest_progress = "Starting analysis."
+    state.latest_progress = ""
     state.latest_error = ""
     state.active_run_id = run_id
+    state.active_run_message_count = len(state.messages)
+    state.active_run_loop_count = len(state.loop_history)
+    state.active_run_artifact_count = len(state.artifacts)
     store.save(state)
 
     task = asyncio.create_task(
@@ -236,6 +262,25 @@ async def chat(request: ChatRequest):
 async def get_conversation(conversation_id: str):
     state = store.load(conversation_id)
     return _snapshot_from_state(state)
+
+
+@app.post("/api/cancel")
+async def cancel(request: CancelRequest):
+    cancel_conversation_processing(request.conversation_id)
+    running_task: Optional[asyncio.Task] = _RUN_TASKS.pop(request.conversation_id, None)
+    if running_task is not None and not running_task.done():
+        running_task.cancel()
+
+    state = store.load(request.conversation_id)
+    _rollback_unfinished_run(state)
+    state.run_status = "cancelled"
+    state.latest_progress = ""
+    state.latest_error = ""
+    state.active_run_id = None
+    store.save(state)
+
+    logger.info("Conversation cancelled cid=%s", request.conversation_id)
+    return {"status": "cancelled"}
 
 
 @app.post("/api/reset")

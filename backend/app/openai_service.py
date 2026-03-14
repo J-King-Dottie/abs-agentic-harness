@@ -1753,6 +1753,120 @@ def _execute_sandbox_tool(
     )
 
 
+def _build_loop_handoff_summary(
+    *,
+    step: Dict[str, Any],
+    progress_note: str,
+    result_summary: str,
+    result_data: Any = None,
+) -> str:
+    step_id = str(step.get("id") or "").strip()
+    attempt = str(step.get("summary") or progress_note or "").strip()
+    if not attempt:
+        attempt = f"Ran step {step_id or 'unknown'}."
+
+    result_dict = result_data if isinstance(result_data, dict) else {}
+    kind = str(result_dict.get("kind") or "").strip()
+
+    outcome = "Completed."
+    known = str(result_summary or "").strip()
+    remaining = ""
+
+    if kind == "tool_error":
+        error_text = str(result_dict.get("error") or "").strip()
+        retry_guidance = str(result_dict.get("retry_guidance") or "").strip()
+        outcome = "Failed."
+        known = error_text or "The step did not complete successfully."
+        remaining = retry_guidance or "Choose a safer next step using the failure details."
+    elif kind in {"retrieve", "raw_retrieve"}:
+        dataset_id = str(result_dict.get("dataset_id") or "").strip()
+        artifact_id = str(result_dict.get("artifact_id") or "").strip()
+        observation_count = result_dict.get("observation_count")
+        series_count = result_dict.get("series_count")
+        outcome_bits = [f"Retrieved {dataset_id}." if dataset_id else "Retrieved the dataset."]
+        if observation_count is not None:
+            outcome_bits.append(f"Observations: {observation_count}.")
+        if series_count is not None:
+            outcome_bits.append(f"Series: {series_count}.")
+        outcome = " ".join(outcome_bits)
+        known_bits = []
+        if artifact_id:
+            known_bits.append(f"Artifact available: {artifact_id}.")
+        retrieval = result_dict.get("retrieval") if isinstance(result_dict.get("retrieval"), dict) else {}
+        template_id = str(retrieval.get("templateId") or "").strip()
+        data_item_id = str(retrieval.get("dataItemId") or "").strip()
+        measure_id = str(retrieval.get("measureId") or "").strip()
+        if template_id:
+            known_bits.append(f"Template: {template_id}.")
+        if data_item_id:
+            known_bits.append(f"Data item: {data_item_id}.")
+        if measure_id:
+            known_bits.append(f"Measure: {measure_id}.")
+        known = " ".join(known_bits) or known
+        remaining = "Inspect or narrow the retrieved artifact before further analysis."
+    elif kind == "structure":
+        dataset_id = str(result_dict.get("dataset_id") or "").strip()
+        data_shape = str(result_dict.get("data_shape") or "").strip()
+        template_count = len(result_dict.get("query_templates") or []) if isinstance(result_dict.get("query_templates"), list) else 0
+        outcome = f"Inspected structure for {dataset_id or 'the dataset'}."
+        known_bits = []
+        if data_shape:
+            known_bits.append(f"Data shape: {data_shape}.")
+        if template_count:
+            known_bits.append(f"Templates available: {template_count}.")
+        known = " ".join(known_bits) or known
+        remaining = "Choose the exact retrieval path from the inspected structure."
+    elif kind == "catalog":
+        datasets = result_dict.get("datasets") if isinstance(result_dict.get("datasets"), list) else []
+        outcome = "Reviewed the curated catalog."
+        known = f"Candidate datasets found: {len(datasets)}." if datasets else (known or "No catalog candidates were recorded.")
+        remaining = "Pick the most relevant dataset and inspect its structure."
+    elif kind == "discover":
+        datasets = result_dict.get("datasets") if isinstance(result_dict.get("datasets"), list) else []
+        outcome = "Reviewed broader ABS discovery results."
+        known = f"Candidate datasets found: {len(datasets)}." if datasets else (known or "No discovery candidates were recorded.")
+        remaining = "Inspect metadata for the best candidate before raw retrieval."
+    elif kind == "raw_metadata":
+        dataset_id = str(result_dict.get("dataset_id") or "").strip()
+        dims = result_dict.get("dimension_order") if isinstance(result_dict.get("dimension_order"), list) else []
+        outcome = f"Inspected metadata for {dataset_id or 'the dataset'}."
+        known = f"Dimension order: {', '.join(str(item) for item in dims[:8])}." if dims else known
+        remaining = "Choose the exact raw data key from the metadata."
+    elif kind == "sandbox":
+        created_ids = result_dict.get("created_artifact_ids") if isinstance(result_dict.get("created_artifact_ids"), list) else []
+        sandbox_result = result_dict.get("result")
+        outcome = "Sandbox step completed."
+        if isinstance(sandbox_result, dict):
+            keys = [str(key) for key in list(sandbox_result.keys())[:8]]
+            known_bits = [f"Result keys: {', '.join(keys)}."] if keys else []
+            if created_ids:
+                known_bits.append(f"Created artifacts: {', '.join(str(item) for item in created_ids[:4])}.")
+            known = " ".join(known_bits) or known
+        elif isinstance(sandbox_result, list):
+            known = f"Result list length: {len(sandbox_result)}."
+            if created_ids:
+                known += f" Created artifacts: {', '.join(str(item) for item in created_ids[:4])}."
+        elif created_ids:
+            known = f"Created artifacts: {', '.join(str(item) for item in created_ids[:4])}."
+        remaining = "Use this result to decide whether the next step is more narrowing or the final calculation."
+    elif kind in {"web_search", "web_page"}:
+        outcome = "Gathered supporting web context."
+        remaining = "Use it only as supporting context, with ABS evidence primary."
+    elif kind in {"model_call_error", "harness_parse_error"}:
+        outcome = "The loop failed before a valid decision completed."
+        remaining = "Retry with a valid loop decision and stricter output formatting."
+
+    sections = [
+        f"Tried: {_truncate(attempt, 240)}",
+        f"Outcome: {_truncate(outcome, 320)}",
+    ]
+    if known:
+        sections.append(f"Known now: {_truncate(known, 480)}")
+    if remaining:
+        sections.append(f"Still unresolved: {_truncate(remaining, 320)}")
+    return "\n".join(sections)
+
+
 def _record_loop_feedback(
     state,
     *,
@@ -1761,9 +1875,16 @@ def _record_loop_feedback(
     result_summary: str,
     result_data: Any = None,
 ) -> None:
+    handoff_summary = _build_loop_handoff_summary(
+        step=step,
+        progress_note=progress_note,
+        result_summary=result_summary,
+        result_data=result_data,
+    )
     entry = {
         "step": step,
         "progress_note": progress_note,
+        "handoff_summary": handoff_summary,
         "result_summary": str(result_summary or "").strip()[:12000],
     }
     if result_data is not None:
@@ -1989,8 +2110,12 @@ def generate_response(
 
     try:
         state = store.load(conversation_id)
-        state.messages.append({"role": "user", "content": user_content})
         _ensure_runtime_dirs(conversation_id)
+
+        def persist_completed_turn(assistant_content: str) -> None:
+            state.messages.append({"role": "user", "content": user_content})
+            state.messages.append({"role": "assistant", "content": assistant_content})
+            store.save(state)
 
         active_user_message = user_content
         payload_chat_history = build_chat_history_payload(state.messages, recent_full_limit=8, older_compact_limit=4)
@@ -2046,8 +2171,7 @@ def generate_response(
                             "plan_markdown": followup_markdown,
                             "plan_context": plan_context,
                         }
-                        state.messages.append({"role": "assistant", "content": followup_markdown})
-                        store.save(state)
+                        persist_completed_turn(followup_markdown)
                         status_callback("The dataset has been curated into the AI overlay and is ready to use.")
                         return followup_markdown
                     else:
@@ -2223,8 +2347,7 @@ def generate_response(
                     "plan_markdown": plan_markdown,
                     "plan_context": plan_context,
                 }
-                state.messages.append({"role": "assistant", "content": plan_markdown})
-                store.save(state)
+                persist_completed_turn(plan_markdown)
                 logger.info(
                     'Loop plan cid=%s loop=%s plan="%s"',
                     conversation_id,
@@ -2236,8 +2359,7 @@ def generate_response(
             if step["id"] == "compose_final":
                 final_answer = str(model_output.get("final_answer_markdown") or "").strip()
                 state.pending_plan = None
-                state.messages.append({"role": "assistant", "content": final_answer})
-                store.save(state)
+                persist_completed_turn(final_answer)
                 logger.info(
                     'Loop final cid=%s loop=%s preview="%s"',
                     conversation_id,
@@ -2323,8 +2445,7 @@ def generate_response(
 
         final_answer = _compose_best_effort_final(conversation_id, active_user_message, state)
         state.pending_plan = None
-        state.messages.append({"role": "assistant", "content": final_answer})
-        store.save(state)
+        persist_completed_turn(final_answer)
         logger.info(
             'Loop max best-effort final cid=%s preview="%s"',
             conversation_id,

@@ -20,6 +20,9 @@ class ConversationState:
     latest_progress: str = ""
     latest_error: str = ""
     active_run_id: str | None = None
+    active_run_message_count: int | None = None
+    active_run_loop_count: int | None = None
+    active_run_artifact_count: int | None = None
 
 
 class ConversationStore:
@@ -58,6 +61,9 @@ class ConversationStore:
             latest_progress=str(raw.get("latest_progress") or ""),
             latest_error=str(raw.get("latest_error") or ""),
             active_run_id=str(raw.get("active_run_id") or "").strip() or None,
+            active_run_message_count=raw.get("active_run_message_count") if isinstance(raw.get("active_run_message_count"), int) else None,
+            active_run_loop_count=raw.get("active_run_loop_count") if isinstance(raw.get("active_run_loop_count"), int) else None,
+            active_run_artifact_count=raw.get("active_run_artifact_count") if isinstance(raw.get("active_run_artifact_count"), int) else None,
         )
 
     def _save_to_disk(self, state: ConversationState) -> None:
@@ -72,6 +78,9 @@ class ConversationStore:
             "latest_progress": state.latest_progress,
             "latest_error": state.latest_error,
             "active_run_id": state.active_run_id,
+            "active_run_message_count": state.active_run_message_count,
+            "active_run_loop_count": state.active_run_loop_count,
+            "active_run_artifact_count": state.active_run_artifact_count,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
