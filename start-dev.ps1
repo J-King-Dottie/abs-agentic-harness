@@ -1,8 +1,7 @@
 Param(
     [string]$EnvFile = ".env",
     [switch]$SkipInstall,
-    [switch]$OpenBrowser,
-    [int]$BackendStartupTimeoutSeconds = 20
+    [switch]$OpenBrowser
 )
 
 Set-StrictMode -Version Latest
@@ -47,6 +46,26 @@ function Resolve-CommandPath {
     throw "Could not find executable. Tried: $($Candidates -join ', ')"
 }
 
+function Clear-ListeningPort {
+    param(
+        [int]$Port
+    )
+
+    $connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue |
+        Where-Object { $_.OwningProcess -gt 0 } |
+        Select-Object -ExpandProperty OwningProcess -Unique
+
+    foreach ($processId in $connections) {
+        try {
+            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+        }
+    }
+
+    Start-Sleep -Milliseconds 500
+}
+
 Import-DotEnv -Path $EnvFile
 
 $RepoRoot = $PSScriptRoot
@@ -77,23 +96,8 @@ if (-not $SkipInstall) {
     if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
 }
 
-$backendArgs = @(
-    "-m",
-    "backend.app.serve",
-    "--host", "127.0.0.1",
-    "--port", "8000",
-    "--reload"
-)
-
-Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue |
-    Where-Object { $_.State -eq "Listen" -and $_.OwningProcess -gt 0 } |
-    ForEach-Object {
-        try {
-            Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
-        }
-        catch {
-        }
-    }
+Clear-ListeningPort -Port 8000
+Clear-ListeningPort -Port 3000
 
 Write-Host "Starting backend with reload on http://127.0.0.1:8000"
 $escapedRepoRoot = $RepoRoot.Replace('"', '""')
@@ -105,46 +109,20 @@ $backendProcess = Start-Process `
     -WorkingDirectory $RepoRoot `
     -PassThru
 
-$frontendStarted = $false
+Start-Sleep -Seconds 5
+
+$url = "http://127.0.0.1:3000"
+Write-Host "Starting frontend dev server with HMR on $url"
+
+if ($OpenBrowser) {
+    Start-Process $url | Out-Null
+}
+
 try {
-    $healthUrl = "http://127.0.0.1:8000/health"
-    $deadline = (Get-Date).AddSeconds($BackendStartupTimeoutSeconds)
-    $backendReady = $false
-
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 500
-
-        if ($backendProcess.HasExited) {
-            throw "Backend process exited before frontend startup. Check the backend terminal for the traceback."
-        }
-
-        try {
-            $response = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 2
-            if ($response.StatusCode -eq 200) {
-                $backendReady = $true
-                break
-            }
-        }
-        catch {
-        }
-    }
-
-    if (-not $backendReady) {
-        throw "Backend did not become ready on http://127.0.0.1:8000. Check the backend terminal for logs."
-    }
-
-    $url = "http://127.0.0.1:3000"
-    Write-Host "Starting frontend dev server with HMR on $url"
-
-    if ($OpenBrowser) {
-        Start-Process $url | Out-Null
-    }
-
-    $frontendStarted = $true
     & $NpmExe run dev --prefix $FrontendRoot
 }
 finally {
-    if ($frontendStarted -and $backendProcess -and -not $backendProcess.HasExited) {
+    if ($backendProcess -and -not $backendProcess.HasExited) {
         try {
             Stop-Process -Id $backendProcess.Id -Force
         }

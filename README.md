@@ -68,12 +68,12 @@ OPENAI_API_KEY=your_key_here
 
 First run:
 ```powershell
-cd path\to\abs-mcp; .\start-dev.ps1
+.\start-dev.ps1
 ```
 
 Later runs:
 ```powershell
-cd path\to\abs-mcp; .\start-dev.ps1 -SkipInstall
+.\start-dev.ps1 -SkipInstall
 ```
 
 Built out of genuine curiosity. If you find it useful or have ideas, open an issue or get in touch.
