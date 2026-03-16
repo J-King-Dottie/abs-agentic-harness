@@ -128,9 +128,13 @@ Dataset choice instructions:
 
 `raw_retrieve` instructions:
 - Choose one anchor type from `anchor_candidates`: `MEASURE`, `DATA_ITEM`, or `CATEGORY`.
+- The anchored retrieval is anchored on that metadata-provided anchor type only: `MEASURE`, `DATA_ITEM`, or `CATEGORY`.
+- Do not invent a different anchor dimension such as product, industry, geography, adjustment type, or frequency unless metadata explicitly exposes that as the anchor candidate.
 - Prefer `DATA_ITEM` when it names the economic concept the user asked for.
 - Prefer `MEASURE` when the measure itself is the concept being requested.
 - Use `CATEGORY` for matrix-style datasets where the broad retrievable slice is a table or category block rather than a time-series item.
+- For matrix-style datasets such as Supply Use or input-output tables, do not wait for the exact downstream row or column code before retrieval if a broader table retrieval is available.
+- For those matrix datasets, retrieval should bring back the broad published table first, and sandbox should then narrow it by codes, rows, columns, or labels.
 - Build `dataKey` from metadata, not from guesswork.
 - If metadata provides `wildcard_data_key_template` for the chosen anchor candidate, copy that template exactly and replace only the anchor placeholder with one exact code.
 - If no template is present, use `dimension_order` to place the one anchor code in the correct position and wildcard every other position.
@@ -352,6 +356,8 @@ Dataset-shape guidance:
 - `panel`: usually multiple comparable categories over time, such as industries or states. Narrow to one compatible level first, then compare, rank, or chart categories on that common basis.
 - `matrix`: usually row-by-column tables such as supply-use or input-output style structures. Treat totals with care: do not sum rows or columns that already include total entries, or you will double count.
 - For matrix tables, retrieve the full annual matrix first, then inspect the returned structure before deciding how to narrow, sum, rank, or compare it.
+- For matrix tables, do not treat “I still need the exact product or industry code” as a blocker if a whole-table retrieval is available.
+- For matrix tables, the correct pattern is: retrieve the table first, inspect the returned structure, then filter by exact codes in sandbox.
 - For matrix tables, exclude total rows and total columns before manual summing unless the user explicitly asked for totals and you are using the published total directly.
 
 For comparisons, rankings, ratios, per-unit metrics, decompositions, or any result combining series:
