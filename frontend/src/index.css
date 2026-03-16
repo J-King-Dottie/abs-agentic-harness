@@ -697,10 +697,6 @@ body {
   font-weight: 600;
 }
 
-.chart-subtitle {
-  color: rgba(30, 43, 33, 0.68);
-}
-
 .chart-frame {
   width: 100%;
   min-width: 0;
@@ -776,6 +772,89 @@ body {
   width: min(980px, 100%);
   margin: 0 auto;
   display: block;
+}
+
+.queued-message-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin: 0 0 0.5rem;
+  width: 100%;
+  padding: 0.42rem 0.62rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow: 0 0 6px rgba(47, 54, 45, 0.05);
+  border: 1px solid rgba(47, 54, 45, 0.08);
+}
+
+.queued-message-copy {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.queued-message-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.queued-message-label {
+  flex-shrink: 0;
+  font-size: 0.76rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(30, 43, 33, 0.48);
+}
+
+.queued-message-text {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #223329;
+}
+
+.queued-message-pill {
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.24rem 0.56rem;
+  background: rgba(35, 66, 51, 0.1);
+  color: #234233;
+  font: inherit;
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.queued-message-pill:hover {
+  background: rgba(35, 66, 51, 0.14);
+}
+
+.queued-message-pill-passive {
+  cursor: default;
+  background: rgba(35, 66, 51, 0.07);
+}
+
+.queued-message-clear {
+  border: 0;
+  background: transparent;
+  color: rgba(30, 43, 33, 0.48);
+  width: 1.7rem;
+  height: 1.7rem;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.queued-message-clear:hover {
+  background: rgba(35, 66, 51, 0.08);
+  color: rgba(30, 43, 33, 0.76);
 }
 
 .composer-input-shell {
@@ -1102,6 +1181,24 @@ body {
 
   .app-footer {
     padding: 0.45rem 0 0.65rem;
+  }
+
+  .queued-message-banner {
+    align-items: flex-start;
+  }
+
+  .queued-message-copy {
+    display: block;
+  }
+
+  .queued-message-actions {
+    margin-top: 0.05rem;
+  }
+
+  .queued-message-text {
+    display: block;
+    margin-top: 0.2rem;
+    white-space: normal;
   }
 
   .composer-input-shell {

@@ -606,7 +606,7 @@ def _catalog_preview_labels(limit: int = 8) -> str:
     return ", ".join(preview)
 
 
-def build_macro_shortlist(query: str, limit: int = 20) -> Dict[str, Any]:
+def build_macro_shortlist(query: str, limit: int = 40) -> Dict[str, Any]:
     clean_query = str(query or "").strip()
     if not clean_query:
         raise RuntimeError("Macro shortlist query cannot be empty.")

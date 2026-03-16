@@ -24,6 +24,8 @@ interface ConversationSnapshotResponse {
   run_status?: unknown;
   latest_progress?: unknown;
   latest_error?: unknown;
+  pending_user_message?: unknown;
+  pending_user_mode?: unknown;
 }
 
 interface ChatAcceptedResponse {
@@ -60,7 +62,6 @@ interface ChartSeries {
 interface ChartSpec {
   type?: "line" | "bar";
   title?: string;
-  subtitle?: string;
   xLabel?: string;
   yLabel?: string;
   series: ChartSeries[];
@@ -177,7 +178,6 @@ function parseChartBlock(raw: string): ChartSpec | null {
     return {
       type: parsed.type === "bar" ? "bar" : "line",
       title: typeof parsed.title === "string" ? parsed.title : undefined,
-      subtitle: typeof parsed.subtitle === "string" ? parsed.subtitle : undefined,
       xLabel: typeof parsed.xLabel === "string" ? parsed.xLabel : undefined,
       yLabel: typeof parsed.yLabel === "string" ? parsed.yLabel : undefined,
       series,
@@ -552,7 +552,6 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
   return (
     <section className="chart-block">
       {spec.title && <h3>{spec.title}</h3>}
-      {spec.subtitle && <p className="chart-subtitle">{spec.subtitle}</p>}
       <div ref={containerRef} className="chart-frame">
         <ReactECharts
           option={option}
@@ -954,12 +953,15 @@ function App() {
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queuedMessage, setQueuedMessage] = useState("");
+  const [queuedMode, setQueuedMode] = useState<"" | "queued" | "steer">("");
   const scrollRef = useRef<HTMLElement | null>(null);
   const pendingRef = useRef<PendingMessage | null>(null);
   const lastProgressRef = useRef("");
   const pollFailureCountRef = useRef(0);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const hydratedConversationRef = useRef("");
+  const queuedSubmitRef = useRef(false);
 
   const syncComposerHeight = () => {
     const element = composerRef.current;
@@ -979,6 +981,46 @@ function App() {
   useEffect(() => {
     syncComposerHeight();
   }, [input]);
+
+  const syncPendingState = (payload: ConversationSnapshotResponse) => {
+    const nextMessage = String(payload.pending_user_message ?? "").trim();
+    const rawMode = String(payload.pending_user_mode ?? "").trim().toLowerCase();
+    const nextMode = rawMode === "queued" || rawMode === "steer" ? rawMode : "";
+    setQueuedMessage(nextMessage);
+    setQueuedMode(nextMode);
+  };
+
+  const storePendingMessage = async (message: string, mode: "queued" | "steer") => {
+    const response = await fetch(`${API_BASE}/api/pending-message`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversation_id: conversationId,
+        message,
+        mode,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to store pending message: ${response.status}`);
+    }
+    const payload = (await response.json()) as ConversationSnapshotResponse;
+    syncPendingState(payload);
+    return payload;
+  };
+
+  const consumePendingMessage = async () => {
+    const response = await fetch(`${API_BASE}/api/pending-message/consume`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ conversation_id: conversationId }),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to clear pending message: ${response.status}`);
+    }
+    const payload = (await response.json()) as ConversationSnapshotResponse;
+    syncPendingState(payload);
+    return payload;
+  };
 
   useEffect(() => {
     let active = true;
@@ -1089,6 +1131,7 @@ function App() {
           return;
         }
         applyConversationSnapshot(payload, setMessages, undefined, true);
+        syncPendingState(payload);
         const runStatus = String(payload.run_status ?? "");
         if (runStatus === "processing") {
           pendingRef.current = null;
@@ -1114,6 +1157,7 @@ function App() {
                 return;
               }
               applyConversationSnapshot(cancelledPayload, setMessages, undefined, true);
+              syncPendingState(cancelledPayload);
             })
             .catch((cancelError) => {
               console.error("Failed to cancel stale background run", cancelError);
@@ -1149,8 +1193,11 @@ function App() {
     setInput("");
     setError(null);
     setIsStreaming(false);
+    setQueuedMessage("");
+    setQueuedMode("");
     pendingRef.current = null;
     lastProgressRef.current = "";
+    queuedSubmitRef.current = false;
     hydratedConversationRef.current = "";
     setConversationId(createConversationId());
     if (typeof window !== "undefined") {
@@ -1188,10 +1235,7 @@ function App() {
     setAuthBusy(false);
   };
 
-  const submitPrompt = async (prompt: string) => {
-    const trimmedPrompt = prompt.trim();
-    if (!trimmedPrompt || isStreaming) return;
-
+  const startPromptRun = async (trimmedPrompt: string) => {
     const userMessage: ChatMessage = {
       id: createConversationId(),
       sender: "user",
@@ -1255,6 +1299,58 @@ function App() {
     }
   };
 
+  const submitPrompt = async (prompt: string) => {
+    const trimmedPrompt = prompt.trim();
+    if (!trimmedPrompt) return;
+
+    if (isStreaming) {
+      try {
+        await storePendingMessage(trimmedPrompt, "queued");
+        setInput("");
+        setError(null);
+      } catch (err) {
+        console.error(err);
+        const message =
+          err instanceof Error ? err.message : "Failed to queue the message.";
+        setError(message);
+      }
+      return;
+    }
+
+    await startPromptRun(trimmedPrompt);
+  };
+
+  const handleSteer = async () => {
+    const message = queuedMessage.trim();
+    if (!message || queuedMode !== "queued") {
+      return;
+    }
+    try {
+      await storePendingMessage(message, "steer");
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      const nextError =
+        err instanceof Error ? err.message : "Failed to steer the active run.";
+      setError(nextError);
+    }
+  };
+
+  const handleClearQueued = async () => {
+    if (!queuedMessage.trim()) {
+      return;
+    }
+    try {
+      await consumePendingMessage();
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      const nextError =
+        err instanceof Error ? err.message : "Failed to clear the queued message.";
+      setError(nextError);
+    }
+  };
+
   useEffect(() => {
     if (!conversationId || !isStreaming || !pendingRef.current) {
       return;
@@ -1274,6 +1370,8 @@ function App() {
           return;
         }
 
+        syncPendingState(payload);
+
         pollFailureCountRef.current = 0;
         setError((prev) => (prev === "Connection interrupted. Retrying..." ? null : prev));
 
@@ -1291,6 +1389,24 @@ function App() {
           applyConversationSnapshot(payload, setMessages, assistantMessageId);
           setIsStreaming(false);
           pendingRef.current = null;
+          const queuedAfterRun = String(payload.pending_user_message ?? "").trim();
+          const queuedModeAfterRun = String(payload.pending_user_mode ?? "").trim().toLowerCase();
+          if (queuedAfterRun && queuedModeAfterRun === "queued" && !queuedSubmitRef.current) {
+            queuedSubmitRef.current = true;
+            try {
+              await consumePendingMessage();
+              await startPromptRun(queuedAfterRun);
+            } catch (queuedError) {
+              console.error(queuedError);
+              const nextError =
+                queuedError instanceof Error
+                  ? queuedError.message
+                  : "Failed to start the queued message.";
+              setError(nextError);
+            } finally {
+              queuedSubmitRef.current = false;
+            }
+          }
           return;
         }
 
@@ -1502,6 +1618,39 @@ function App() {
 
       <footer className="app-footer">
         <form onSubmit={handleSubmit} className="composer">
+          {queuedMessage && (
+            <div className="queued-message-banner">
+              <div className="queued-message-copy">
+                <span className="queued-message-label">
+                  {queuedMode === "steer" ? "Steering next" : "Queued"}
+                </span>
+                <span className="queued-message-text">{queuedMessage}</span>
+              </div>
+              <div className="queued-message-actions">
+                {isStreaming && queuedMode === "queued" ? (
+                  <button
+                    type="button"
+                    className="queued-message-pill"
+                    onClick={() => void handleSteer()}
+                  >
+                    Steer
+                  </button>
+                ) : queuedMode === "steer" ? (
+                  <span className="queued-message-pill queued-message-pill-passive">
+                    Steering
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className="queued-message-clear"
+                  onClick={() => void handleClearQueued()}
+                  aria-label="Delete queued message"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+          )}
           <div className="composer-input-shell">
             <textarea
               ref={composerRef}
@@ -1510,13 +1659,12 @@ function App() {
               onKeyDown={handleComposerKeyDown}
               placeholder="Ask an ABS economic question..."
               rows={1}
-              disabled={isStreaming}
             />
             <button
               type="submit"
-              disabled={isStreaming || !input.trim()}
+              disabled={!input.trim()}
               className="icon-send-button"
-              aria-label={isStreaming ? "Sending message" : "Send message"}
+              aria-label={isStreaming ? "Queue message" : "Send message"}
             >
               <svg viewBox="0 0 24 24" aria-hidden="true">
                 <path

@@ -39,12 +39,20 @@ class CancelRequest(BaseModel):
     conversation_id: str = Field(..., description="Conversation to cancel without clearing chat history.")
 
 
+class PendingMessageRequest(BaseModel):
+    conversation_id: str = Field(..., description="Conversation to update.")
+    message: str = Field(..., description="Queued or steer message text.")
+    mode: str = Field(..., description="Pending message mode: queued or steer.")
+
+
 class ConversationSnapshot(BaseModel):
     conversation_id: str
     messages: list[dict[str, str]]
     run_status: str
     latest_progress: str
     latest_error: str
+    pending_user_message: str = ""
+    pending_user_mode: str = ""
 
 
 class ChatAcceptedResponse(BaseModel):
@@ -141,6 +149,8 @@ def _snapshot_from_state(state) -> ConversationSnapshot:
         run_status=str(state.run_status or "idle"),
         latest_progress=str(state.latest_progress or ""),
         latest_error=str(state.latest_error or ""),
+        pending_user_message=str(getattr(state, "pending_user_message", "") or ""),
+        pending_user_mode=str(getattr(state, "pending_user_mode", "") or ""),
     )
 
 
@@ -307,6 +317,44 @@ async def get_conversation(conversation_id: str):
     state = store.load(conversation_id)
     if _normalize_stale_processing_state(state):
         store.save(state)
+    return _snapshot_from_state(state)
+
+
+@app.post("/api/pending-message")
+async def set_pending_message(request: PendingMessageRequest):
+    message = request.message.strip()
+    mode = request.mode.strip().lower()
+    if not message:
+        raise HTTPException(status_code=400, detail="Pending message cannot be empty.")
+    if mode not in {"queued", "steer"}:
+        raise HTTPException(status_code=400, detail="Pending message mode must be queued or steer.")
+
+    state = store.load(request.conversation_id)
+    if _normalize_stale_processing_state(state):
+        store.save(state)
+    state.pending_user_message = message
+    state.pending_user_mode = mode
+    store.save(state)
+    _emit_runtime_log(
+        f'Pending message stored cid={request.conversation_id} mode={mode} message="{_truncate(message)}"'
+    )
+    logger.info(
+        'Pending message stored cid=%s mode=%s message="%s"',
+        request.conversation_id,
+        mode,
+        _truncate(message),
+    )
+    return _snapshot_from_state(state)
+
+
+@app.post("/api/pending-message/consume")
+async def consume_pending_message(request: ResetRequest):
+    state = store.load(request.conversation_id)
+    if _normalize_stale_processing_state(state):
+        store.save(state)
+    state.pending_user_message = ""
+    state.pending_user_mode = ""
+    store.save(state)
     return _snapshot_from_state(state)
 
 

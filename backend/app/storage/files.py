@@ -21,6 +21,8 @@ class ConversationState:
     run_status: str = "idle"
     latest_progress: str = ""
     latest_error: str = ""
+    pending_user_message: str = ""
+    pending_user_mode: str = ""
     active_run_id: str | None = None
     active_run_message_count: int | None = None
     active_run_loop_count: int | None = None
@@ -64,6 +66,8 @@ class ConversationStore:
             run_status=str(raw.get("run_status") or "idle"),
             latest_progress=str(raw.get("latest_progress") or ""),
             latest_error=str(raw.get("latest_error") or ""),
+            pending_user_message=str(raw.get("pending_user_message") or ""),
+            pending_user_mode=str(raw.get("pending_user_mode") or ""),
             active_run_id=str(raw.get("active_run_id") or "").strip() or None,
             active_run_message_count=raw.get("active_run_message_count") if isinstance(raw.get("active_run_message_count"), int) else None,
             active_run_loop_count=raw.get("active_run_loop_count") if isinstance(raw.get("active_run_loop_count"), int) else None,
@@ -83,6 +87,8 @@ class ConversationStore:
             "run_status": state.run_status,
             "latest_progress": state.latest_progress,
             "latest_error": state.latest_error,
+            "pending_user_message": state.pending_user_message,
+            "pending_user_mode": state.pending_user_mode,
             "active_run_id": state.active_run_id,
             "active_run_message_count": state.active_run_message_count,
             "active_run_loop_count": state.active_run_loop_count,

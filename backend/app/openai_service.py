@@ -578,6 +578,37 @@ def _make_artifact_record(
     return record
 
 
+def _persist_shortlist_artifact(
+    *,
+    state,
+    conversation_id: str,
+    kind: str,
+    query: str,
+    candidates: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    run_dir = _ensure_runtime_dirs(conversation_id)
+    safe_kind = re.sub(r"[^a-z0-9_]+", "_", kind.lower()).strip("_") or "shortlist"
+    artifact_payload = {
+        "artifact_type": kind,
+        "query": str(query or "").strip(),
+        "candidates": [item for item in candidates if isinstance(item, dict)],
+    }
+    artifact_path = run_dir / "artifacts" / f"{safe_kind}_{len(state.artifacts) + 1:03d}.json"
+    _write_json(artifact_path, artifact_payload)
+    label_prefix = "ABS dataset shortlist" if kind == "abs_dataset_shortlist" else "Macro indicator shortlist"
+    record = _make_artifact_record(
+        state=state,
+        path=artifact_path,
+        kind=kind,
+        label=f"{label_prefix}: {str(query or '').strip()[:60]}".strip(),
+        summary=_truncate(
+            f"{label_prefix} for '{query}' with {len(candidates)} candidates.",
+            300,
+        ),
+    )
+    return record
+
+
 def _truncate(text: Any, limit: int = 180) -> str:
     value = str(text or "").replace("\n", " ").strip()
     return value if len(value) <= limit else value[: limit - 1] + "…"
@@ -808,7 +839,7 @@ def _summarize_tool_input(tool_input: Dict[str, Any]) -> str:
     if sandbox_request:
         parts.append(f"sandbox_request={_truncate(sandbox_request, 160)}")
     return "; ".join(parts) if parts else "no key inputs"
-def _build_discover_payload(search_query: str, limit: int = 20) -> Dict[str, Any]:
+def _build_discover_payload(search_query: str, limit: int = 40) -> Dict[str, Any]:
     logger.info(
         'ABS FTS discover start query="%s" limit=%s',
         _truncate(search_query, 200),
@@ -1288,6 +1319,13 @@ def _execute_macro_data_tool(
         state.current_macro_indicator_shortlist = [
             item for item in _to_list(candidates) if isinstance(item, dict)
         ]
+        shortlist_record = _persist_shortlist_artifact(
+            state=state,
+            conversation_id=conversation_id,
+            kind="macro_indicator_shortlist",
+            query=query,
+            candidates=state.current_macro_indicator_shortlist,
+        )
         logger.info(
             "Macro shortlist complete cid=%s candidates=%s top=%s",
             conversation_id,
@@ -1296,13 +1334,14 @@ def _execute_macro_data_tool(
         )
         return _tool_result(
             _truncate(
-                f"Prepared macro indicator shortlist for '{query}'. Candidates: {len(candidates) if isinstance(candidates, list) else 0}.",
+                f"Prepared macro indicator shortlist for '{query}'. Candidates: {len(candidates) if isinstance(candidates, list) else 0}. Created artifact: {shortlist_record['artifact_id']}.",
                 300,
             ),
             {
                 "kind": "macro_indicator_shortlist",
                 "query": query,
                 "candidates": candidates if isinstance(candidates, list) else [],
+                "artifact_id": shortlist_record["artifact_id"],
             },
         )
 
@@ -2723,6 +2762,33 @@ def generate_response(
         for loop_index in range(1, settings.max_loops + 1):
             _ensure_not_cancelled(conversation_id, cancel_event, f"loop_{loop_index}_start")
 
+            pending_mode = str(getattr(state, "pending_user_mode", "") or "").strip().lower()
+            pending_message = str(getattr(state, "pending_user_message", "") or "").strip()
+            if pending_mode == "steer" and pending_message:
+                emit_status("User steer received. Adapting to the new request.")
+                logger.info(
+                    'Loop steer inject cid=%s loop=%s message="%s"',
+                    conversation_id,
+                    loop_index,
+                    _truncate(pending_message, 220),
+                )
+                active_user_message = pending_message
+                payload_chat_history = build_chat_history_payload(
+                    state.messages, recent_full_limit=8, older_compact_limit=4
+                )
+                state.pending_user_message = ""
+                state.pending_user_mode = ""
+                state.pending_plan = None
+                pre_run_dataset_shortlist = []
+                pre_run_macro_indicator_shortlist = []
+                state.current_abs_dataset_shortlist = []
+                state.current_macro_indicator_shortlist = []
+                selected_provider_route = ""
+                selected_route_query = ""
+                route_hint = _detect_provider_route(active_user_message)
+                pre_run_provider_route = dict(route_hint or {})
+                store.save(state)
+
             if not pre_run_dataset_shortlist and selected_provider_route == "abs":
                 shortlist_query = selected_route_query or active_user_message
                 logger.info(
@@ -2731,17 +2797,25 @@ def generate_response(
                     selected_provider_route,
                     _truncate(shortlist_query, 220),
                 )
-                shortlist_payload = _build_discover_payload(shortlist_query, limit=20)
+                shortlist_payload = _build_discover_payload(shortlist_query, limit=40)
                 shortlist_items = shortlist_payload.get("datasets") if isinstance(shortlist_payload, dict) else []
                 pre_run_dataset_shortlist = [
                     item for item in _to_list(shortlist_items) if isinstance(item, dict)
                 ]
                 state.current_abs_dataset_shortlist = list(pre_run_dataset_shortlist)
+                shortlist_record = _persist_shortlist_artifact(
+                    state=state,
+                    conversation_id=conversation_id,
+                    kind="abs_dataset_shortlist",
+                    query=shortlist_query,
+                    candidates=pre_run_dataset_shortlist,
+                )
                 logger.info(
-                    "Post-route ABS shortlist ready cid=%s route=%s count=%s top=%s",
+                    "Post-route ABS shortlist ready cid=%s route=%s count=%s artifact=%s top=%s",
                     conversation_id,
                     selected_provider_route,
                     len(pre_run_dataset_shortlist),
+                    shortlist_record["artifact_id"],
                     [str(item.get("dataset_id") or "").strip() for item in pre_run_dataset_shortlist[:3]],
                 )
             if not pre_run_macro_indicator_shortlist and selected_provider_route == "macro":
@@ -2752,7 +2826,7 @@ def generate_response(
                     selected_provider_route,
                     _truncate(shortlist_query, 220),
                 )
-                macro_shortlist_payload = build_macro_shortlist(shortlist_query, limit=20)
+                macro_shortlist_payload = build_macro_shortlist(shortlist_query, limit=40)
                 macro_candidates = (
                     macro_shortlist_payload.get("candidates")
                     if isinstance(macro_shortlist_payload, dict)
@@ -2762,11 +2836,19 @@ def generate_response(
                     item for item in _to_list(macro_candidates) if isinstance(item, dict)
                 ]
                 state.current_macro_indicator_shortlist = list(pre_run_macro_indicator_shortlist)
+                shortlist_record = _persist_shortlist_artifact(
+                    state=state,
+                    conversation_id=conversation_id,
+                    kind="macro_indicator_shortlist",
+                    query=shortlist_query,
+                    candidates=pre_run_macro_indicator_shortlist,
+                )
                 logger.info(
-                    "Post-route macro shortlist ready cid=%s route=%s count=%s top=%s",
+                    "Post-route macro shortlist ready cid=%s route=%s count=%s artifact=%s top=%s",
                     conversation_id,
                     selected_provider_route,
                     len(pre_run_macro_indicator_shortlist),
+                    shortlist_record["artifact_id"],
                     [str(item.get("candidate_id") or "").strip() for item in pre_run_macro_indicator_shortlist[:3]],
                 )
 
