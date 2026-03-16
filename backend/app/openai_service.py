@@ -2520,6 +2520,26 @@ def _metadata_anchor_codes_for_dataset(state, dataset_id: str) -> set[str]:
     return set()
 
 
+def _last_provider_route_context(state) -> Dict[str, str]:
+    for item in reversed(state.loop_history):
+        if not isinstance(item, dict):
+            continue
+        result_data = item.get("result_data") if isinstance(item.get("result_data"), dict) else {}
+        if str(result_data.get("kind") or "").strip() != "provider_route_selection":
+            continue
+        route = _normalize_provider_route(result_data.get("route"))
+        search_query = str(result_data.get("search_query") or "").strip()
+        reason = str(result_data.get("reason") or "").strip()
+        if route:
+            payload: Dict[str, str] = {"selected_route": route}
+            if search_query:
+                payload["selected_search_query"] = search_query
+            if reason:
+                payload["routing_reason"] = reason
+            return payload
+    return {}
+
+
 def _sandbox_retry_conflict(state, tool_input: Dict[str, Any]) -> Optional[str]:
     recent_failure = _recent_failed_sandbox_entry(state)
     if recent_failure is None:
@@ -2678,7 +2698,18 @@ def generate_response(
         pre_run_macro_indicator_shortlist: List[Dict[str, Any]] = []
         selected_provider_route = ""
         selected_route_query = ""
-        if clarification_followup:
+        carried_provider_route = _last_provider_route_context(state)
+        if carried_provider_route:
+            pre_run_provider_route.update(
+                {key: value for key, value in carried_provider_route.items() if value}
+            )
+            selected_provider_route = _normalize_provider_route(
+                carried_provider_route.get("selected_route")
+            ) or ""
+            selected_route_query = str(
+                carried_provider_route.get("selected_search_query") or ""
+            ).strip()
+        if clarification_followup and not selected_provider_route:
             hinted_route = _normalize_provider_route(pre_run_provider_route.get("provider_route"))
             if hinted_route:
                 selected_provider_route = hinted_route

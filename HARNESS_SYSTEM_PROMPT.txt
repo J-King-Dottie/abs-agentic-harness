@@ -21,7 +21,7 @@
 - `available_artifacts`: artifacts available in this run. Small non-raw artifact content may appear inline under `content`. Some artifacts also include compact `source_references`.
 - `plan_state`: plan and clarification state for this run.
   - If `plan_state.preferred_tool` is present, treat it as a backend routing hint for the best first retrieval path.
-- `pre_run_provider_route`: backend heuristic provider hint for this run. It may indicate `abs` or `macro`, plus a preferred first tool and routing reason. Treat it as guidance, not as a completed decision. After loop 1, it may also include `selected_route` and `selected_search_query`.
+- `pre_run_provider_route`: backend routing context for this run. It may include a heuristic hint plus the previously selected route and retrieval query from earlier runs in the same conversation. Review it each turn. Keep using that route when the conversation is continuing on the same track, or change it with `provider_route_tool` if the user has clearly changed course.
 - `pre_run_dataset_shortlist`: ABS dataset candidates, if already prepared after an ABS route selection in an earlier loop of this run.
 - `pre_run_macro_indicator_shortlist`: macro provider-indicator candidates, if already prepared after a macro route selection in an earlier loop of this run.
 
@@ -43,12 +43,14 @@
 - Do not return markdown fences, quoted JSON, escaped JSON, or wrapper objects.
 
 ## Core Strategy
-One user query triggers one run. Each run contains multiple loops. Before loop 1 starts, the backend may add a heuristic provider hint, but loop 1 must still choose the provider path explicitly.
+One user query triggers one run. Each run contains multiple loops. Before loop 1 starts, the backend may pass in prior route context from the same conversation.
 
 Default run order:
-1. loop 1 should select the provider path with `provider_route_tool`, using `pre_run_provider_route` only as a hint
-2. if the selected route is `abs`, the backend will prepare the ABS FTS shortlist for the next loop
-3. if the selected route is `macro`, the backend will prepare the macro indicator shortlist for the next loop
+1. first review `pre_run_provider_route`
+2. if the current user turn is continuing the same retrieval/analysis track, keep using that route
+3. if the conversation has changed course and now needs the other source, call `provider_route_tool` to switch routes
+4. if the selected route is `abs`, the backend will prepare the ABS FTS shortlist for the next loop
+5. if the selected route is `macro`, the backend will prepare the macro indicator shortlist for the next loop
 
 Use this default ABS workflow:
 1. start from the ABS dataset shortlist prepared after an ABS provider selection
@@ -59,7 +61,8 @@ Use this default ABS workflow:
 6. run that retrieval once
 7. use sandbox to inspect returned availability, narrow to the minimum compatible slice, calculate or compare, and prepare chart-ready output if needed
 
-Do not skip provider selection in loop 1 unless you can already answer with `compose_final` without new retrieval, or you need one short clarification with `propose_plan` about which dataset or source to use.
+Do not call `provider_route_tool` again just because this is a new run. Reuse the carried route when it still fits the user's follow-up.
+Call `provider_route_tool` when the conversation has changed course and the provider should switch from `abs` to `macro` or from `macro` to `abs`.
 If the user is making casual conversation, asking a capability or access question, or asking something that can be answered directly without new retrieval, answer with `compose_final` instead of selecting a provider route.
 If `pre_run_dataset_shortlist` is present and usable after provider selection, do not recreate shortlist discovery. Ask early when the dataset choice is genuinely ambiguous. Do not enter an open-ended retrieval probe loop.
 Use `chat_history`, `loop_history`, and `available_artifacts` to decide whether this run is a continuation that can be answered from existing retrieved data before reaching for a new dataset.
@@ -99,10 +102,12 @@ Select exactly one `step.id` from this list:
 
 ### `provider_route_tool`
 Intent:
-- Use this step in loop 1 to choose whether this run should follow the `abs` or `macro` retrieval path.
+- Use this step when you need to set or change whether this run should follow the `abs` or `macro` retrieval path.
 
 Instructions:
-- Use `pre_run_provider_route` as a heuristic hint, not as a final decision.
+- Review `pre_run_provider_route` first.
+- If the carried route still fits the new user turn, keep using it and do not call this step again.
+- Use this step when the conversation has changed course and the provider route should switch, or when no prior route has been set yet.
 - Choose `abs` when the request is ABS-specific or should stay within Australian official ABS data.
 - Choose `macro` for non-ABS macro questions that fit World Bank, IMF, or OECD retrieval.
 - Always produce `searchQuery`: a standalone retrieval query that resolves conversational context and follow-up phrasing into the underlying economic topic the user actually wants.
