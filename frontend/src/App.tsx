@@ -835,8 +835,9 @@ function ProductTitle() {
                     mattered. Grain, livestock, labour, taxes.
                   </p>
                   <p>
-                    Your Nisaba does the same, drawing on ABS data
-                    and global sources like the OECD, World Bank, and IMF.
+                    Your Nisaba does the same. Built specifically for Australian analysts,
+                    it draws from detailed ABS data as its core, with global context
+                    from the OECD, World Bank, and IMF.
                   </p>
                   <p>
                     Ask anything about the Australian economy and how it compares
@@ -1382,6 +1383,7 @@ function App() {
               <div className="empty-state-note">
                 <div className="empty-state-note-group">
                   <p>Nisaba has access to ABS data plus global sources like the OECD, World Bank, and IMF.</p>
+                  <p>This system is designed for detailed Australian analysis with macro global comparisons.</p>
                   <p>Targeted questions work well. Complex, layered ones can still cause problems.</p>
                   <p>Break complex questions down and work through them step by step.</p>
                 </div>

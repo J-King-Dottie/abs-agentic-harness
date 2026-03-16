@@ -6,6 +6,8 @@ MCP servers and Claude/Codex agentic frameworks are genuinely powerful — but t
 
 Nisaba exists to make these tools accessible to everyone else.
 
+It is designed first for detailed Australian analysis, with global macro context layered in where useful.
+
 The backend is open source — run it locally if you want. We are also hosting a public version on AWS where anyone can log in and use it on a pay-per-use basis.
 
 Pricing is API cost plus a small margin to cover hosting. That's it.
