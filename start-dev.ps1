@@ -1,7 +1,8 @@
 Param(
     [string]$EnvFile = ".env",
     [switch]$SkipInstall,
-    [switch]$OpenBrowser
+    [switch]$OpenBrowser,
+    [switch]$Reload
 )
 
 Set-StrictMode -Version Latest
@@ -51,11 +52,30 @@ function Clear-ListeningPort {
         [int]$Port
     )
 
+    $processIds = @()
+
     $connections = Get-NetTCPConnection -LocalPort $Port -ErrorAction SilentlyContinue |
         Where-Object { $_.OwningProcess -gt 0 } |
         Select-Object -ExpandProperty OwningProcess -Unique
+    if ($connections) {
+        $processIds += $connections
+    }
 
-    foreach ($processId in $connections) {
+    $netstatLines = netstat -ano | Select-String -Pattern (":{0}\s" -f $Port)
+    foreach ($line in $netstatLines) {
+        $parts = ($line.ToString().Trim() -split "\s+") | Where-Object { $_ }
+        if ($parts.Length -ge 5) {
+            $pidText = $parts[-1]
+            $parsedPid = 0
+            if ([int]::TryParse($pidText, [ref]$parsedPid) -and $parsedPid -gt 0) {
+                $processIds += $parsedPid
+            }
+        }
+    }
+
+    $processIds = $processIds | Select-Object -Unique
+
+    foreach ($processId in $processIds) {
         try {
             Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
         }
@@ -63,7 +83,14 @@ function Clear-ListeningPort {
         }
     }
 
-    Start-Sleep -Milliseconds 500
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        $stillBound = netstat -ano | Select-String -Pattern ("127.0.0.1:{0}\s" -f $Port)
+        if (-not $stillBound) {
+            break
+        }
+        Start-Sleep -Milliseconds 250
+    }
 }
 
 Import-DotEnv -Path $EnvFile
@@ -96,35 +123,43 @@ if (-not $SkipInstall) {
     if ($LASTEXITCODE -ne 0) { throw "pip install failed." }
 }
 
-Clear-ListeningPort -Port 8000
+Clear-ListeningPort -Port 5000
 Clear-ListeningPort -Port 3000
 
-Write-Host "Starting backend with reload on http://127.0.0.1:8000"
+$reloadArgs = @()
+$backendMode = "without reload"
+if ($Reload) {
+    $reloadArgs = @("--reload")
+    $backendMode = "with reload"
+}
+
+$url = "http://127.0.0.1:3000"
+Write-Host "Starting frontend dev server with HMR on $url in a separate terminal"
 $escapedRepoRoot = $RepoRoot.Replace('"', '""')
-$escapedPythonExe = $PythonExe.Replace('"', '""')
-$backendCommand = "cd /d `"$escapedRepoRoot`" && `"$escapedPythonExe`" -m backend.app.serve --host 127.0.0.1 --port 8000 --reload"
-$backendProcess = Start-Process `
+$escapedFrontendRoot = $FrontendRoot.Replace('"', '""')
+$frontendCommand = "cd /d `"$escapedFrontendRoot`" && `"$NpmExe`" run dev"
+$frontendProcess = Start-Process `
     -FilePath "cmd.exe" `
-    -ArgumentList @("/k", $backendCommand) `
-    -WorkingDirectory $RepoRoot `
+    -ArgumentList @("/k", $frontendCommand) `
+    -WorkingDirectory $FrontendRoot `
     -PassThru
 
 Start-Sleep -Seconds 5
-
-$url = "http://127.0.0.1:3000"
-Write-Host "Starting frontend dev server with HMR on $url"
 
 if ($OpenBrowser) {
     Start-Process $url | Out-Null
 }
 
+Write-Host "Starting backend $backendMode on http://127.0.0.1:5000 in this terminal"
+[Environment]::SetEnvironmentVariable("PYTHONUNBUFFERED", "1", "Process")
+
 try {
-    & $NpmExe run dev --prefix $FrontendRoot
+    & $PythonExe -u -m backend.app.serve --host 127.0.0.1 --port 5000 @reloadArgs
 }
 finally {
-    if ($backendProcess -and -not $backendProcess.HasExited) {
+    if ($frontendProcess -and -not $frontendProcess.HasExited) {
         try {
-            Stop-Process -Id $backendProcess.Id -Force
+            taskkill /PID $frontendProcess.Id /T /F | Out-Null
         }
         catch {
         }

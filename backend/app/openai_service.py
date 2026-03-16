@@ -7,6 +7,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Callable, Dict, List, Optional
@@ -35,7 +36,7 @@ from .storage import ConversationStore
 settings = get_settings()
 logger = logging.getLogger("abs.backend.harness")
 if not logger.handlers:
-    stream_handler = logging.StreamHandler()
+    stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(
         logging.Formatter("[%(asctime)s] %(levelname)s %(name)s - %(message)s")
     )

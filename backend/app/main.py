@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 import logging
 import secrets
+import sys
+import time
 from pathlib import Path
 from typing import Optional
 
 import os
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,12 +56,13 @@ class ChatAcceptedResponse(BaseModel):
 def _configure_logger() -> logging.Logger:
     logger = logging.getLogger("abs.backend")
     if not logger.handlers:
-        handler = logging.StreamHandler()
+        handler = logging.StreamHandler(sys.stdout)
         handler.setFormatter(
             logging.Formatter("[%(asctime)s] %(levelname)s %(name)s - %(message)s")
         )
         logger.addHandler(handler)
     logger.setLevel(logging.INFO)
+    logger.propagate = False
     return logger
 
 
@@ -90,9 +94,34 @@ async def healthcheck():
     return {"status": "ok"}
 
 
+@app.middleware("http")
+async def runtime_request_logger(request: Request, call_next):
+    started = time.perf_counter()
+    _emit_runtime_log(f"HTTP start {request.method} {request.url.path}")
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _emit_runtime_log(f"HTTP error {request.method} {request.url.path} after {elapsed_ms}ms")
+        raise
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    _emit_runtime_log(
+        f"HTTP end {request.method} {request.url.path} status={response.status_code} duration_ms={elapsed_ms}"
+    )
+    return response
+
+
 def _truncate(text: str, length: int = 280) -> str:
     clean = text.replace("\n", " ").strip()
     return clean if len(clean) <= length else clean[: length - 1] + "…"
+
+
+def _emit_runtime_log(message: str) -> None:
+    text = str(message or "").strip()
+    if not text:
+        return
+    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S,%f')[:-3]}] INFO abs.backend - {text}"
+    print(line, flush=True)
 
 
 def _filtered_messages(state) -> list[dict[str, str]]:
@@ -154,9 +183,12 @@ async def _run_generation_job(
         state = store.load(conversation_id)
         if state.active_run_id != run_id:
             return
-        state.latest_progress = str(message or "").strip()
+        normalized = str(message or "").strip()
+        state.latest_progress = normalized
         state.latest_error = ""
         store.save(state)
+        if normalized:
+            _emit_runtime_log(f'Progress cid={conversation_id} message="{_truncate(normalized, 220)}"')
 
     try:
         final_response = await asyncio.to_thread(
@@ -167,6 +199,7 @@ async def _run_generation_job(
             emit_status,
         )
     except ConversationCancelled:
+        _emit_runtime_log(f"Conversation cancelled mid-generation cid={conversation_id}")
         logger.info("Conversation cancelled mid-generation cid=%s", conversation_id)
         state = store.load(conversation_id)
         if state.active_run_id == run_id:
@@ -200,6 +233,7 @@ async def _run_generation_job(
                 exc,
             )
     else:
+        _emit_runtime_log(f'Response ready cid={conversation_id} preview="{_truncate(final_response)}"')
         logger.info(
             'Response ready cid=%s preview="%s"',
             conversation_id,
@@ -225,6 +259,7 @@ async def chat(request: ChatRequest):
     if not user_input:
         raise HTTPException(status_code=400, detail="Message cannot be empty.")
 
+    _emit_runtime_log(f'Incoming chat request cid={request.conversation_id} message="{_truncate(user_input)}"')
     logger.info(
         'Incoming chat request cid=%s message="%s"',
         request.conversation_id,
@@ -290,6 +325,7 @@ async def cancel(request: CancelRequest):
     state.active_run_id = None
     store.save(state)
 
+    _emit_runtime_log(f"Conversation cancelled cid={request.conversation_id}")
     logger.info("Conversation cancelled cid=%s", request.conversation_id)
     return {"status": "cancelled"}
 
@@ -302,6 +338,7 @@ async def reset(request: ResetRequest):
         running_task.cancel()
     store.clear(request.conversation_id)
     reset_conversation_runtime(request.conversation_id)
+    _emit_runtime_log(f"Conversation cleared cid={request.conversation_id}")
     logger.info("Conversation cleared cid=%s", request.conversation_id)
     return {"status": "cleared"}
 

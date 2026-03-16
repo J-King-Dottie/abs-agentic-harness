@@ -64,7 +64,7 @@ OPENAI_API_KEY=your_key_here
 ## Local Dev
 
 - frontend dev server with HMR on `http://127.0.0.1:3000`
-- backend auto-reload on `http://127.0.0.1:8000`
+- backend on `http://127.0.0.1:5000`
 
 First run:
 ```powershell
@@ -74,6 +74,11 @@ First run:
 Later runs:
 ```powershell
 .\start-dev.ps1 -SkipInstall
+```
+
+If you explicitly want backend auto-reload:
+```powershell
+.\start-dev.ps1 -SkipInstall -Reload
 ```
 
 Built out of genuine curiosity. If you find it useful or have ideas, open an issue or get in touch.

@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import logging
+import sys
 from typing import Any, Dict, Optional, Tuple
 
 from .config import get_settings
@@ -13,6 +14,14 @@ from typing import List
 
 
 logger = logging.getLogger("abs.backend.mcp_bridge")
+if not logger.handlers:
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(
+        logging.Formatter("[%(asctime)s] %(levelname)s %(name)s - %(message)s")
+    )
+    logger.addHandler(stream_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 
 ANSI_ESCAPE_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
