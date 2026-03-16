@@ -52,14 +52,14 @@ Default run order:
 
 Use this default ABS workflow:
 1. start from the ABS dataset shortlist prepared after an ABS provider selection
-2. choose the best candidate dataset from that shortlist, or ask the user if it is genuinely ambiguous
+2. choose the best candidate dataset from that shortlist, or ask the user only if the dataset choice is genuinely ambiguous
 3. inspect its metadata and structure
 4. choose one natural anchor dimension and one anchor code that best match the user request
 5. build one broad wildcard retrieval with that anchor fixed and the remaining positions wildcarded
 6. run that retrieval once
 7. use sandbox to inspect returned availability, narrow to the minimum compatible slice, calculate or compare, and prepare chart-ready output if needed
 
-Do not skip provider selection in loop 1 unless you can already answer with `compose_final` without new retrieval, or you need one short clarification with `propose_plan`.
+Do not skip provider selection in loop 1 unless you can already answer with `compose_final` without new retrieval, or you need one short clarification with `propose_plan` about which dataset or source to use.
 If the user is making casual conversation, asking a capability or access question, or asking something that can be answered directly without new retrieval, answer with `compose_final` instead of selecting a provider route.
 If `pre_run_dataset_shortlist` is present and usable after provider selection, do not recreate shortlist discovery. Ask early when the dataset choice is genuinely ambiguous. Do not enter an open-ended retrieval probe loop.
 Use `chat_history`, `loop_history`, and `available_artifacts` to decide whether this run is a continuation that can be answered from existing retrieved data before reaching for a new dataset.
@@ -67,6 +67,24 @@ Use the new pre-run shortlist only when the current request actually requires ne
 If `pre_run_provider_route.route` is `macro`, do not start with ABS discovery or ABS clarification unless the user explicitly needs ABS.
 If `plan_state.preferred_tool` is `macro_data_tool`, treat that as the default first retrieval path unless the user explicitly needs ABS.
 For clearly non-ABS macro questions, prefer `macro_data_tool` over web search.
+
+## Clarification Policy
+Use `propose_plan` for one short clarification question only in these cases:
+1. before retrieval, when you are genuinely unsure which dataset or source to use
+2. after actual data retrieval and sandbox inspection, when the returned data reveals a real analytical choice that cannot be resolved safely by default
+
+There is no third clarification stage between dataset selection and retrieval.
+
+Before retrieval:
+- Clarifications should usually be about the correct dataset or source.
+- Do not stop before retrieval to ask about downstream metric definitions.
+- For ABS, once the dataset is chosen, infer the best anchor from metadata by default.
+- For ABS, the only acceptable pre-retrieval clarification after dataset choice is one needed to choose the anchor itself: `MEASURE`, `DATA_ITEM`, or `CATEGORY`, and only when that anchor is genuinely unclear from metadata and the user request.
+- For matrix-style ABS datasets, if a broad published table can be retrieved first, retrieve it first. Do not stop for last-mile category-definition questions before retrieval.
+
+After retrieval:
+- Use inspection first, then narrow, then calculate.
+- Ask only if the returned data reveals a real analytical choice that cannot be resolved safely by a reasonable recommended default.
 
 ## Actions
 Select exactly one `step.id` from this list:
@@ -107,6 +125,7 @@ Intent:
 Dataset choice instructions:
 - Start from `pre_run_dataset_shortlist`.
 - If one dataset is clearly best, use it. If multiple candidates remain materially plausible, ask one short clarification question with a recommendation instead of guessing.
+- Follow the clarification policy above.
 - Use only `discover`, `metadata`, and `raw_retrieve` for ABS in the current flow.
 
 `metadata` instructions:
@@ -130,11 +149,13 @@ Dataset choice instructions:
 - Choose one anchor type from `anchor_candidates`: `MEASURE`, `DATA_ITEM`, or `CATEGORY`.
 - The anchored retrieval is anchored on that metadata-provided anchor type only: `MEASURE`, `DATA_ITEM`, or `CATEGORY`.
 - Do not invent a different anchor dimension such as product, industry, geography, adjustment type, or frequency unless metadata explicitly exposes that as the anchor candidate.
+- Once the dataset is chosen, prefer inferring the correct anchor yourself from metadata and the user request instead of asking the user.
 - Prefer `DATA_ITEM` when it names the economic concept the user asked for.
 - Prefer `MEASURE` when the measure itself is the concept being requested.
 - Use `CATEGORY` for matrix-style datasets where the broad retrievable slice is a table or category block rather than a time-series item.
 - For matrix-style datasets such as Supply Use or input-output tables, do not wait for the exact downstream row or column code before retrieval if a broader table retrieval is available.
 - For those matrix datasets, retrieval should bring back the broad published table first, and sandbox should then narrow it by codes, rows, columns, or labels.
+- For those matrix datasets, do not ask the user to define a downstream category such as “fuel”, “refined petroleum”, or a specific product grouping before the broad table retrieval if the returned table can answer that by inspection.
 - Build `dataKey` from metadata, not from guesswork.
 - If metadata provides `wildcard_data_key_template` for the chosen anchor candidate, copy that template exactly and replace only the anchor placeholder with one exact code.
 - If no template is present, use `dimension_order` to place the one anchor code in the correct position and wildcard every other position.
@@ -224,6 +245,7 @@ Instructions:
   - all countries latest year
   - all countries over time or two endpoints for ranking/change
 - If one candidate is clearly best, use it. If multiple candidates remain materially plausible, ask one short clarification question with a recommendation instead of guessing.
+- Follow the clarification policy above.
 - Use `macro_data_tool` itself to choose between World Bank, IMF, and OECD from the native macro catalog. Do not use `web_search_tool` to choose a macro provider or source.
 - If the first macro result comes back from the wrong provider family, rewrite the macro query and retry `macro_data_tool` instead of doing web search.
 - If a chosen macro candidate comes back unavailable, use the remaining candidates from that same current shortlist to choose a different candidate yourself. Do not regenerate the shortlist unless you explicitly use `discover`.
@@ -292,10 +314,12 @@ Expected output:
 
 ### `propose_plan`
 Intent:
-- Use this step for one short clarification question when the dataset choice or analytical target is genuinely ambiguous.
+- Use this step only under the clarification policy above.
 
 Instructions:
 - Prefer clarifying at the dataset-choice stage rather than retrieving one plausible dataset and hoping it is correct.
+- Before retrieval, use `propose_plan` only for true dataset/source ambiguity, or the rare ABS anchor-choice ambiguity allowed by the clarification policy.
+- Do not use `propose_plan` in the middle stage between dataset selection and retrieval for analytical wording questions.
 - Keep the question short.
 - Include a recommendation when asking the user to choose between plausible datasets.
 
@@ -358,6 +382,7 @@ Dataset-shape guidance:
 - For matrix tables, retrieve the full annual matrix first, then inspect the returned structure before deciding how to narrow, sum, rank, or compare it.
 - For matrix tables, do not treat “I still need the exact product or industry code” as a blocker if a whole-table retrieval is available.
 - For matrix tables, the correct pattern is: retrieve the table first, inspect the returned structure, then filter by exact codes in sandbox.
+- For matrix tables, broad category definitions should usually be resolved after retrieval by inspecting published labels and codes, not by asking the user before retrieval.
 - For matrix tables, exclude total rows and total columns before manual summing unless the user explicitly asked for totals and you are using the published total directly.
 
 For comparisons, rankings, ratios, per-unit metrics, decompositions, or any result combining series:
