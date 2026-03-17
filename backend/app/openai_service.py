@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 from html import unescape
 import json
 import logging
@@ -14,6 +15,9 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
+from openpyxl import Workbook
+from openpyxl.chart import BarChart, LineChart, Reference
+from openpyxl.styles import Alignment
 
 from .config import get_settings
 from .harness.parser import HarnessParserError, parse_harness_loop_output
@@ -576,6 +580,467 @@ def _make_artifact_record(
         record["source_references"] = source_references[:12]
     state.artifacts.append(record)
     return record
+
+
+def get_latest_export_artifact_path(state) -> Path | None:
+    target_id = str(getattr(state, "latest_export_artifact_id", "") or "").strip()
+    if not target_id:
+        return None
+    for item in reversed(state.artifacts):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("artifact_id") or "").strip() != target_id:
+            continue
+        path_value = str(item.get("path") or "").strip()
+        if not path_value:
+            return None
+        path = Path(path_value)
+        return path if path.exists() else None
+    return None
+
+
+def generate_latest_export(conversation_id: str, store: ConversationStore) -> Path | None:
+    state = store.load(conversation_id)
+    request = state.latest_export_request if isinstance(state.latest_export_request, dict) else None
+    if not request:
+        return get_latest_export_artifact_path(state)
+
+    try:
+        _build_answer_export(
+            state=state,
+            conversation_id=conversation_id,
+            user_message=str(request.get("user_message") or "").strip(),
+            final_answer=str(request.get("final_answer") or "").strip(),
+            run_loop_start_index=int(request.get("run_loop_start_index") or 0),
+        )
+        state.latest_export_status = "ready"
+        state.latest_export_request = None
+        store.save(state)
+    except Exception:
+        state.latest_export_status = "failed"
+        state.latest_export_request = None
+        store.save(state)
+        raise
+
+    return get_latest_export_artifact_path(state)
+
+
+def _safe_sheet_text(value: Any) -> str:
+    text = str(value or "").strip()
+    return text if len(text) <= 32000 else text[:31997] + "..."
+
+
+def _parse_chart_spec_from_markdown(markdown: str) -> Dict[str, Any] | None:
+    text = str(markdown or "").strip()
+    if not text:
+        return None
+    match = re.search(r"```chart\s*(\{.*?\})\s*```", text, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        parsed = json.loads(match.group(1))
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    series = parsed.get("series")
+    if not isinstance(series, list) or not series:
+        return None
+    normalized_series: List[Dict[str, Any]] = []
+    for entry in series:
+        if not isinstance(entry, dict):
+            continue
+        points = entry.get("points")
+        if not isinstance(points, list) or not points:
+            continue
+        normalized_points = []
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            x = str(point.get("x") or "").strip()
+            y = point.get("y")
+            if not x:
+                continue
+            try:
+                numeric_y = float(y)
+            except Exception:
+                continue
+            normalized_points.append({"x": x, "y": numeric_y})
+        if normalized_points:
+            normalized_series.append(
+                {
+                    "name": str(entry.get("name") or "Series").strip() or "Series",
+                    "points": normalized_points,
+                }
+            )
+    if not normalized_series:
+        return None
+    return {
+        "type": "bar" if str(parsed.get("type") or "").strip().lower() == "bar" else "line",
+        "title": str(parsed.get("title") or "").strip(),
+        "xLabel": str(parsed.get("xLabel") or "").strip(),
+        "yLabel": str(parsed.get("yLabel") or "").strip(),
+        "series": normalized_series,
+    }
+
+
+def _source_preview(source_references: Any) -> str:
+    return "; ".join(_source_reference_lines(source_references)[:4])
+
+
+def _source_reference_lines(source_references: Any) -> List[str]:
+    if not isinstance(source_references, list):
+        return []
+    lines: List[str] = []
+    seen: set[str] = set()
+    for item in source_references:
+        if not isinstance(item, dict):
+            continue
+        line = " | ".join(
+            part
+            for part in [
+                str(item.get("provider") or "").strip(),
+                str(item.get("dataset_id") or item.get("series_id") or "").strip(),
+                str(item.get("title") or item.get("indicator") or "").strip(),
+                str(item.get("url") or "").strip(),
+            ]
+            if part
+        ).strip()
+        if not line or line in seen:
+            continue
+        seen.add(line)
+        lines.append(line)
+    return lines
+
+
+def _load_artifact_payload(record: Dict[str, Any]) -> Any:
+    path_value = str(record.get("path") or "").strip()
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.exists():
+        return None
+    try:
+        if path.suffix.lower() == ".json":
+            return json.loads(path.read_text(encoding="utf-8"))
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except Exception:
+        return None
+
+
+def _rows_from_artifact(record: Dict[str, Any]) -> List[Dict[str, str]]:
+    payload = _load_artifact_payload(record)
+    kind = str(record.get("kind") or "").strip()
+    artifact_id = str(record.get("artifact_id") or "").strip()
+    label = str(record.get("label") or "").strip()
+    source_text = _source_preview(record.get("source_references"))
+    rows: List[Dict[str, str]] = []
+
+    if isinstance(payload, dict):
+        if kind == "macro_query_response":
+            series = payload.get("response", {}).get("series") if isinstance(payload.get("response"), dict) else []
+            if isinstance(series, list):
+                for index, item in enumerate(series[:200], start=1):
+                    rows.append(
+                        {
+                            "section": "raw_data",
+                            "artifact_id": artifact_id,
+                            "artifact_label": label,
+                            "source": source_text,
+                            "detail": f"Series {index}",
+                            "value": _safe_sheet_text(json.dumps(item, ensure_ascii=False)),
+                            "method": "",
+                        }
+                    )
+        elif kind == "abs_resolved_dataset":
+            series = payload.get("resolved_dataset", {}).get("series") if isinstance(payload.get("resolved_dataset"), dict) else []
+            if isinstance(series, list):
+                for index, item in enumerate(series[:200], start=1):
+                    rows.append(
+                        {
+                            "section": "raw_data",
+                            "artifact_id": artifact_id,
+                            "artifact_label": label,
+                            "source": source_text,
+                            "detail": f"Series {index}",
+                            "value": _safe_sheet_text(json.dumps(item, ensure_ascii=False)),
+                            "method": "",
+                        }
+                    )
+        elif kind == "sandbox_result":
+            rows.append(
+                {
+                    "section": "calculation_output",
+                    "artifact_id": artifact_id,
+                    "artifact_label": label,
+                    "source": source_text,
+                    "detail": "Derived result",
+                    "value": _safe_sheet_text(json.dumps(payload, ensure_ascii=False)),
+                    "method": "",
+                }
+            )
+
+    if rows:
+        return rows
+
+    return [
+        {
+            "section": "raw_data",
+            "artifact_id": artifact_id,
+            "artifact_label": label,
+            "source": source_text,
+            "detail": str(record.get("summary") or "").strip(),
+            "value": _safe_sheet_text(
+                json.dumps(payload, ensure_ascii=False) if isinstance(payload, (dict, list)) else str(payload or "")
+            ),
+            "method": "",
+        }
+    ]
+
+
+def _run_has_exportable_support(state, run_loop_start_index: int) -> bool:
+    current_run_history = state.loop_history[run_loop_start_index:]
+    for entry in current_run_history:
+        if not isinstance(entry, dict):
+            continue
+        step = entry.get("step") if isinstance(entry.get("step"), dict) else {}
+        result_data = entry.get("result_data") if isinstance(entry.get("result_data"), dict) else {}
+        step_id = str(step.get("id") or "").strip()
+        kind = str(result_data.get("kind") or "").strip()
+        if kind in {"retrieve", "raw_retrieve", "macro_query"}:
+            return True
+        if step_id == "sandbox_tool":
+            tool_input = step.get("tool_input") if isinstance(step.get("tool_input"), dict) else {}
+            artifact_ids = tool_input.get("artifact_ids") if isinstance(tool_input.get("artifact_ids"), list) else []
+            created_ids = result_data.get("created_artifact_ids") if isinstance(result_data.get("created_artifact_ids"), list) else []
+            if artifact_ids or created_ids:
+                return True
+    return False
+
+
+def _add_excel_chart_to_sheet(sheet, chart_spec: Dict[str, Any], start_row: int) -> int:
+    series = chart_spec.get("series") if isinstance(chart_spec.get("series"), list) else []
+    if not series:
+        return start_row
+
+    x_values: List[str] = []
+    for entry in series:
+        if not isinstance(entry, dict):
+            continue
+        for point in entry.get("points") or []:
+            if not isinstance(point, dict):
+                continue
+            x = str(point.get("x") or "").strip()
+            if x and x not in x_values:
+                x_values.append(x)
+    if not x_values:
+        return start_row
+
+    support_col_start = 8  # H
+    support_row_start = 2
+    sheet.cell(row=support_row_start, column=support_col_start, value=chart_spec.get("xLabel") or "x")
+    for series_index, entry in enumerate(series, start=1):
+        sheet.cell(
+            row=support_row_start,
+            column=support_col_start + series_index,
+            value=str(entry.get("name") or f"Series {series_index}"),
+        )
+    for row_offset, x in enumerate(x_values, start=1):
+        sheet.cell(row=support_row_start + row_offset, column=support_col_start, value=x)
+        for series_index, entry in enumerate(series, start=1):
+            point_map = {
+                str(point.get("x") or "").strip(): point.get("y")
+                for point in (entry.get("points") or [])
+                if isinstance(point, dict)
+            }
+            sheet.cell(
+                row=support_row_start + row_offset,
+                column=support_col_start + series_index,
+                value=point_map.get(x),
+            )
+
+    chart = BarChart() if chart_spec.get("type") == "bar" else LineChart()
+    chart_title = str(chart_spec.get("title") or "").strip()
+    if chart_title:
+        chart.title = chart_title
+    y_label = str(chart_spec.get("yLabel") or "").strip()
+    if y_label:
+        chart.y_axis.title = y_label
+    x_label = str(chart_spec.get("xLabel") or "").strip()
+    if x_label:
+        chart.x_axis.title = x_label
+    chart.height = 10
+    chart.width = 18
+    data = Reference(
+        sheet,
+        min_col=support_col_start + 1,
+        max_col=support_col_start + len(series),
+        min_row=support_row_start,
+        max_row=support_row_start + len(x_values),
+    )
+    categories = Reference(
+        sheet,
+        min_col=support_col_start,
+        min_row=support_row_start + 1,
+        max_row=support_row_start + len(x_values),
+    )
+    chart.add_data(data, titles_from_data=True)
+    chart.set_categories(categories)
+    sheet.add_chart(chart, f"A{start_row}")
+
+    for col_index in range(support_col_start, support_col_start + len(series) + 1):
+        sheet.column_dimensions[chr(64 + col_index)].hidden = True
+    return start_row + 20
+
+
+def _build_answer_export(
+    *,
+    state,
+    conversation_id: str,
+    user_message: str,
+    final_answer: str,
+    run_loop_start_index: int,
+) -> str:
+    current_run_history = state.loop_history[run_loop_start_index:]
+    chart_spec = _parse_chart_spec_from_markdown(final_answer)
+    artifact_map = {
+        str(item.get("artifact_id") or "").strip(): item
+        for item in state.artifacts
+        if isinstance(item, dict) and str(item.get("artifact_id") or "").strip()
+    }
+
+    raw_artifact_ids: List[str] = []
+    calc_artifact_ids: List[str] = []
+    calc_rows: List[Dict[str, str]] = []
+
+    for entry in current_run_history:
+        if not isinstance(entry, dict):
+            continue
+        step = entry.get("step") if isinstance(entry.get("step"), dict) else {}
+        result_data = entry.get("result_data") if isinstance(entry.get("result_data"), dict) else {}
+        step_id = str(step.get("id") or "").strip()
+        kind = str(result_data.get("kind") or "").strip()
+        if kind in {"retrieve", "raw_retrieve", "macro_query"}:
+            artifact_id = str(result_data.get("artifact_id") or "").strip()
+            if artifact_id and artifact_id not in raw_artifact_ids:
+                raw_artifact_ids.append(artifact_id)
+        if step_id == "sandbox_tool":
+            tool_input = step.get("tool_input") if isinstance(step.get("tool_input"), dict) else {}
+            input_artifact_ids = [
+                str(item).strip()
+                for item in (tool_input.get("artifact_ids") or [])
+                if isinstance(item, str) and str(item).strip()
+            ]
+            for artifact_id in input_artifact_ids:
+                if artifact_id and artifact_id not in raw_artifact_ids:
+                    raw_artifact_ids.append(artifact_id)
+            created_ids = [
+                str(item).strip()
+                for item in (result_data.get("created_artifact_ids") or [])
+                if isinstance(item, str) and str(item).strip()
+            ]
+            for artifact_id in created_ids:
+                if artifact_id and artifact_id not in calc_artifact_ids:
+                    calc_artifact_ids.append(artifact_id)
+            calc_rows.append(
+                {
+                    "section": "calculation",
+                    "artifact_id": ", ".join(created_ids[:4]),
+                    "artifact_label": "Sandbox calculation",
+                    "source": "",
+                    "detail": "Calculation method",
+                    "value": _safe_sheet_text(
+                        json.dumps(result_data.get("result"), ensure_ascii=False)
+                        if isinstance(result_data.get("result"), (dict, list))
+                        else str(result_data.get("result") or "")
+                    ),
+                    "method": _safe_sheet_text(
+                        str(tool_input.get("sandbox_request") or result_data.get("generated_code_preview") or "").strip()
+                    ),
+                }
+            )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Analysis"
+    source_lines: List[str] = []
+    seen_source_lines: set[str] = set()
+    for artifact_id in raw_artifact_ids + calc_artifact_ids:
+        record = artifact_map.get(artifact_id)
+        if not record:
+            continue
+        for line in _source_reference_lines(record.get("source_references")):
+            if line in seen_source_lines:
+                continue
+            seen_source_lines.add(line)
+            source_lines.append(line)
+    sheet.append(["Summary", "", "", "", "", ""])
+    sheet.append(["Question", user_message, "", "", "", ""])
+    sheet.append(["Generated", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%SZ"), "", "", "", ""])
+    sheet.append(["Answer preview", _safe_sheet_text(_truncate(final_answer, 400)), "", "", "", ""])
+    sheet.append(["Artifacts used", ", ".join(raw_artifact_ids + calc_artifact_ids), "", "", "", ""])
+    if source_lines:
+        sheet.append(["Sources", _safe_sheet_text(source_lines[0]), "", "", "", ""])
+        for line in source_lines[1:12]:
+            sheet.append(["", _safe_sheet_text(line), "", "", "", ""])
+    sheet.append([])
+    next_row = sheet.max_row + 1
+    if chart_spec:
+        next_row = _add_excel_chart_to_sheet(sheet, chart_spec, next_row)
+        while sheet.max_row < next_row - 1:
+            sheet.append([""])
+    sheet.append(["Raw data", "", "", "", "", ""])
+    sheet.append(["section", "artifact_id", "artifact_label", "source", "detail", "value"])
+
+    for artifact_id in raw_artifact_ids:
+        record = artifact_map.get(artifact_id)
+        if not record:
+            continue
+        for row in _rows_from_artifact(record):
+            sheet.append([row["section"], row["artifact_id"], row["artifact_label"], row["source"], row["detail"], row["value"]])
+
+    sheet.append([])
+    sheet.append(["Calculations", "", "", "", "", ""])
+    sheet.append(["section", "artifact_id", "artifact_label", "source", "detail", "value / method"])
+    for row in calc_rows:
+        value = row["value"]
+        if row["method"]:
+            value = f"{value}\n\nMethod: {row['method']}".strip()
+        sheet.append([row["section"], row["artifact_id"], row["artifact_label"], row["source"], row["detail"], value])
+    for artifact_id in calc_artifact_ids:
+        record = artifact_map.get(artifact_id)
+        if not record:
+            continue
+        for row in _rows_from_artifact(record):
+            sheet.append([row["section"], row["artifact_id"], row["artifact_label"], row["source"], row["detail"], row["value"]])
+
+    widths = {"A": 16, "B": 18, "C": 28, "D": 32, "E": 24, "F": 110}
+    for col, width in widths.items():
+        sheet.column_dimensions[col].width = width
+    for row in sheet.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+    sheet.freeze_panes = f"A{max(next_row + 1, 8)}"
+
+    run_dir = _ensure_runtime_dirs(conversation_id)
+    path = run_dir / "artifacts" / f"answer_export_{len(state.artifacts) + 1:03d}.xlsx"
+    workbook.save(path)
+    source_references: List[Dict[str, Any]] = []
+    for artifact_id in raw_artifact_ids:
+        record = artifact_map.get(artifact_id)
+        refs = record.get("source_references") if isinstance(record, dict) else None
+        if isinstance(refs, list):
+            source_references.extend([item for item in refs if isinstance(item, dict)])
+    record = _make_artifact_record(
+        state=state,
+        path=path,
+        kind="answer_export",
+        label="Excel export",
+        summary=_truncate(f"One-sheet Excel export for '{user_message}'.", 300),
+        source_references=source_references[:12],
+    )
+    state.latest_export_artifact_id = record["artifact_id"]
+    return record["artifact_id"]
 
 
 def _persist_shortlist_artifact(
@@ -3063,6 +3528,17 @@ def generate_response(
             if step["id"] == "compose_final":
                 final_answer = str(model_output.get("final_answer_markdown") or "").strip()
                 state.pending_plan = None
+                state.latest_export_artifact_id = ""
+                if _run_has_exportable_support(state, run_loop_start_index):
+                    state.latest_export_status = "processing"
+                    state.latest_export_request = {
+                        "user_message": active_user_message,
+                        "final_answer": final_answer,
+                        "run_loop_start_index": run_loop_start_index,
+                    }
+                else:
+                    state.latest_export_status = ""
+                    state.latest_export_request = None
                 persist_completed_turn(final_answer)
                 logger.info(
                     'Loop final cid=%s loop=%s preview="%s"',

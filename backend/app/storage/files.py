@@ -23,6 +23,9 @@ class ConversationState:
     latest_error: str = ""
     pending_user_message: str = ""
     pending_user_mode: str = ""
+    latest_export_artifact_id: str = ""
+    latest_export_status: str = ""
+    latest_export_request: Dict[str, Any] | None = None
     active_run_id: str | None = None
     active_run_message_count: int | None = None
     active_run_loop_count: int | None = None
@@ -68,6 +71,9 @@ class ConversationStore:
             latest_error=str(raw.get("latest_error") or ""),
             pending_user_message=str(raw.get("pending_user_message") or ""),
             pending_user_mode=str(raw.get("pending_user_mode") or ""),
+            latest_export_artifact_id=str(raw.get("latest_export_artifact_id") or ""),
+            latest_export_status=str(raw.get("latest_export_status") or ""),
+            latest_export_request=raw.get("latest_export_request") if isinstance(raw.get("latest_export_request"), dict) else None,
             active_run_id=str(raw.get("active_run_id") or "").strip() or None,
             active_run_message_count=raw.get("active_run_message_count") if isinstance(raw.get("active_run_message_count"), int) else None,
             active_run_loop_count=raw.get("active_run_loop_count") if isinstance(raw.get("active_run_loop_count"), int) else None,
@@ -89,6 +95,9 @@ class ConversationStore:
             "latest_error": state.latest_error,
             "pending_user_message": state.pending_user_message,
             "pending_user_mode": state.pending_user_mode,
+            "latest_export_artifact_id": state.latest_export_artifact_id,
+            "latest_export_status": state.latest_export_status,
+            "latest_export_request": state.latest_export_request,
             "active_run_id": state.active_run_id,
             "active_run_message_count": state.active_run_message_count,
             "active_run_loop_count": state.active_run_loop_count,

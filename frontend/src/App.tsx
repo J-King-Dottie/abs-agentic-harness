@@ -26,6 +26,8 @@ interface ConversationSnapshotResponse {
   latest_error?: unknown;
   pending_user_message?: unknown;
   pending_user_mode?: unknown;
+  latest_export_url?: unknown;
+  latest_export_status?: unknown;
 }
 
 interface ChatAcceptedResponse {
@@ -955,6 +957,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [queuedMessage, setQueuedMessage] = useState("");
   const [queuedMode, setQueuedMode] = useState<"" | "queued" | "steer">("");
+  const [latestExportUrl, setLatestExportUrl] = useState("");
+  const [latestExportStatus, setLatestExportStatus] = useState("");
   const scrollRef = useRef<HTMLElement | null>(null);
   const pendingRef = useRef<PendingMessage | null>(null);
   const lastProgressRef = useRef("");
@@ -988,6 +992,8 @@ function App() {
     const nextMode = rawMode === "queued" || rawMode === "steer" ? rawMode : "";
     setQueuedMessage(nextMessage);
     setQueuedMode(nextMode);
+    setLatestExportUrl(String(payload.latest_export_url ?? "").trim());
+    setLatestExportStatus(String(payload.latest_export_status ?? "").trim().toLowerCase());
   };
 
   const storePendingMessage = async (message: string, mode: "queued" | "steer") => {
@@ -1195,6 +1201,8 @@ function App() {
     setIsStreaming(false);
     setQueuedMessage("");
     setQueuedMode("");
+    setLatestExportUrl("");
+    setLatestExportStatus("");
     pendingRef.current = null;
     lastProgressRef.current = "";
     queuedSubmitRef.current = false;
@@ -1452,6 +1460,42 @@ function App() {
     };
   }, [conversationId, isStreaming]);
 
+  useEffect(() => {
+    if (!conversationId || isStreaming || latestExportStatus !== "processing") {
+      return;
+    }
+
+    let cancelled = false;
+
+    const pollExport = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/conversation/${encodeURIComponent(conversationId)}`);
+        if (!response.ok) {
+          throw new Error(`Failed to poll export status: ${response.status}`);
+        }
+        const payload = (await response.json()) as ConversationSnapshotResponse;
+        if (cancelled) {
+          return;
+        }
+        syncPendingState(payload);
+      } catch (err) {
+        if (!cancelled) {
+          console.error(err);
+        }
+      }
+    };
+
+    void pollExport();
+    const timer = window.setInterval(() => {
+      void pollExport();
+    }, 1500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [conversationId, isStreaming, latestExportStatus]);
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     await submitPrompt(input);
@@ -1464,6 +1508,13 @@ function App() {
       form?.requestSubmit();
     }
   };
+
+  const lastCompletedAssistantIndex = messages.reduce((lastIndex, message, index) => {
+    if (message.sender === "assistant" && message.content.trim()) {
+      return index;
+    }
+    return lastIndex;
+  }, -1);
 
   if (!authReady) {
     return (
@@ -1580,7 +1631,7 @@ function App() {
             </div>
           )}
 
-          {messages.map((message) =>
+          {messages.map((message, index) =>
             message.sender === "progress" ? (
               <article key={message.id} className="bubble-row progress">
                 <div className={`progress-step${isProgressSubtask(message.content) ? " progress-step-subtask" : ""}`}>
@@ -1593,7 +1644,24 @@ function App() {
             ) : message.sender === "assistant" ? (
               <article key={message.id} className="bubble-row assistant-text">
                 {message.content ? (
-                  <div className="assistant-text-block">{renderContentBlocks(message.content)}</div>
+                  <div className="assistant-text-block">
+                    {renderContentBlocks(message.content)}
+                    {!isStreaming && latestExportUrl && index === lastCompletedAssistantIndex ? (
+                      <div className="assistant-export-link">
+                        <a href={`${API_BASE}${latestExportUrl}`} target="_blank" rel="noreferrer" aria-label="Download Excel export">
+                          <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill="currentColor" d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Zm0 1.5L17.5 7H14ZM9.2 10.6h1.6l1.3 2.2 1.3-2.2H15l-2.1 3.2 2.2 3.6h-1.7l-1.4-2.4-1.4 2.4H8.9l2.2-3.6Z"/>
+                          </svg>
+                        </a>
+                      </div>
+                    ) : !isStreaming &&
+                      latestExportStatus === "processing" &&
+                      index === lastCompletedAssistantIndex ? (
+                      <div className="assistant-export-pending" aria-live="polite" aria-label="Preparing Excel export">
+                        <span className="assistant-export-spinner" aria-hidden="true" />
+                      </div>
+                    ) : null}
+                  </div>
                 ) : (
                   <div className="thinking-line" aria-live="polite" aria-label="Thinking">
                     <NisabaLoader />

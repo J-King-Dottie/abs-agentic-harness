@@ -21,6 +21,8 @@ from .openai_service import (
     ConversationCancelled,
     cancel_conversation_processing,
     generate_response,
+    generate_latest_export,
+    get_latest_export_artifact_path,
     reset_conversation_runtime,
 )
 from .storage import ConversationStore
@@ -53,6 +55,8 @@ class ConversationSnapshot(BaseModel):
     latest_error: str
     pending_user_message: str = ""
     pending_user_mode: str = ""
+    latest_export_url: str = ""
+    latest_export_status: str = ""
 
 
 class ChatAcceptedResponse(BaseModel):
@@ -79,6 +83,7 @@ app = FastAPI(title="ABS Analyst Harness API", version="0.2.0")
 logger = _configure_logger()
 frontend_dist = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 _RUN_TASKS: dict[str, asyncio.Task] = {}
+_EXPORT_TASKS: dict[str, asyncio.Task] = {}
 
 
 def _cors_origins() -> list[str]:
@@ -143,6 +148,9 @@ def _filtered_messages(state) -> list[dict[str, str]]:
 
 
 def _snapshot_from_state(state) -> ConversationSnapshot:
+    export_url = ""
+    if get_latest_export_artifact_path(state):
+        export_url = f"/api/conversation/{state.conversation_id}/latest-export"
     return ConversationSnapshot(
         conversation_id=state.conversation_id,
         messages=_filtered_messages(state),
@@ -151,6 +159,8 @@ def _snapshot_from_state(state) -> ConversationSnapshot:
         latest_error=str(state.latest_error or ""),
         pending_user_message=str(getattr(state, "pending_user_message", "") or ""),
         pending_user_mode=str(getattr(state, "pending_user_mode", "") or ""),
+        latest_export_url=export_url,
+        latest_export_status=str(getattr(state, "latest_export_status", "") or ""),
     )
 
 
@@ -259,8 +269,27 @@ async def _run_generation_job(
             state.active_run_loop_count = None
             state.active_run_artifact_count = None
             store.save(state)
+            if isinstance(getattr(state, "latest_export_request", None), dict):
+                export_task = _EXPORT_TASKS.get(conversation_id)
+                if export_task is None or export_task.done():
+                    _EXPORT_TASKS[conversation_id] = asyncio.create_task(
+                        _run_export_job(conversation_id)
+                    )
     finally:
         _RUN_TASKS.pop(conversation_id, None)
+
+
+async def _run_export_job(conversation_id: str) -> None:
+    try:
+        await asyncio.to_thread(generate_latest_export, conversation_id, store)
+    except Exception as exc:
+        logger.exception("Failed to generate export cid=%s error=%s", conversation_id, exc)
+        _emit_runtime_log(f"Export generation failed cid={conversation_id} error={_truncate(str(exc), 220)}")
+    else:
+        _emit_runtime_log(f"Export ready cid={conversation_id}")
+        logger.info("Export ready cid=%s", conversation_id)
+    finally:
+        _EXPORT_TASKS.pop(conversation_id, None)
 
 
 @app.post("/api/chat", response_model=ChatAcceptedResponse)
@@ -320,6 +349,21 @@ async def get_conversation(conversation_id: str):
     return _snapshot_from_state(state)
 
 
+@app.get("/api/conversation/{conversation_id}/latest-export")
+async def get_latest_export(conversation_id: str):
+    state = store.load(conversation_id)
+    if _normalize_stale_processing_state(state):
+        store.save(state)
+    path = get_latest_export_artifact_path(state)
+    if path is None:
+        raise HTTPException(status_code=404, detail="No export available.")
+    return FileResponse(
+        path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=path.name,
+    )
+
+
 @app.post("/api/pending-message")
 async def set_pending_message(request: PendingMessageRequest):
     message = request.message.strip()
@@ -364,6 +408,9 @@ async def cancel(request: CancelRequest):
     running_task: Optional[asyncio.Task] = _RUN_TASKS.pop(request.conversation_id, None)
     if running_task is not None and not running_task.done():
         running_task.cancel()
+    export_task: Optional[asyncio.Task] = _EXPORT_TASKS.pop(request.conversation_id, None)
+    if export_task is not None and not export_task.done():
+        export_task.cancel()
 
     state = store.load(request.conversation_id)
     _rollback_unfinished_run(state)
@@ -384,6 +431,9 @@ async def reset(request: ResetRequest):
     running_task: Optional[asyncio.Task] = _RUN_TASKS.pop(request.conversation_id, None)
     if running_task is not None and not running_task.done():
         running_task.cancel()
+    export_task: Optional[asyncio.Task] = _EXPORT_TASKS.pop(request.conversation_id, None)
+    if export_task is not None and not export_task.done():
+        export_task.cancel()
     store.clear(request.conversation_id)
     reset_conversation_runtime(request.conversation_id)
     _emit_runtime_log(f"Conversation cleared cid={request.conversation_id}")

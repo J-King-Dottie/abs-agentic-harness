@@ -370,6 +370,7 @@ Required chart format:
 Chart contract:
 - Supported chart types are `line` and `bar`.
 - If a chart is used, put only one title in `chart.title`. Do not add a separate markdown heading or subtitle immediately before the chart, and do not use `subtitle`.
+- Make `chart.title` specific and informative by including the key series variant, unit or transformation, and dataset or provider context when known.
 - Top-level fields may include `title`, `type`, `xLabel`, `yLabel`, and `series`.
 - `series` must be an array.
 - Each series object must contain `name` and `points`.

@@ -703,6 +703,51 @@ body {
   padding: 0.2rem 0;
 }
 
+.assistant-export-link {
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.assistant-export-link a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2rem;
+  height: 1.2rem;
+  color: rgba(35, 66, 51, 0.86);
+  text-decoration: none;
+}
+
+.assistant-export-link a svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.assistant-export-pending {
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+.assistant-export-spinner {
+  width: 0.92rem;
+  height: 0.92rem;
+  border-radius: 999px;
+  border: 1.5px solid rgba(35, 66, 51, 0.14);
+  border-top-color: rgba(35, 66, 51, 0.58);
+  animation: exportSpin 0.75s linear infinite;
+}
+
+@keyframes exportSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .chart-echart {
   width: 100%;
   display: block;
