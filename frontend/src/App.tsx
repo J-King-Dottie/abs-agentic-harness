@@ -915,11 +915,11 @@ function ProductTitle() {
                     {" · "}
                     open source{" "}
                     <a
-                      href="https://github.com/J-King-Dottie/AusData-AI-Harness"
+                      href="https://github.com/J-King-Dottie/ausdata-ai-harness"
                       target="_blank"
                       rel="noreferrer"
                     >
-                      @AusData-AI-Harness
+                      @ausdata-ai-harness
                     </a>
                   </p>
                   <p>
