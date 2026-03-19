@@ -10,12 +10,15 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import os
 from pathlib import Path
 from threading import Event, Lock
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 
 import httpx
+import requests
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from openpyxl.styles import Alignment
@@ -35,7 +38,12 @@ from .macro_data import (
     retrieve_macro_candidate,
     run_macro_query,
 )
-from .mcp_bridge import MCPBridgeError, get_dataflow_metadata, list_dataflows, resolve_dataset
+from .mcp_bridge import (
+    MCPBridgeError,
+    get_dataflow_metadata,
+    list_dataflows,
+    resolve_dataset,
+)
 from .storage import ConversationStore
 
 
@@ -95,6 +103,19 @@ NON_ABS_COUNTRY_HINTS = {
     "japan", "china", "us", "usa", "united states", "uk", "united kingdom",
     "germany", "france", "canada", "india", "korea", "euro area", "singapore",
     "brazil", "indonesia", "new zealand",
+}
+
+EMPLOYMENT_INTENT_TERMS = {
+    "employment",
+    "employed",
+    "employ",
+    "job",
+    "jobs",
+    "worker",
+    "workers",
+    "workforce",
+    "labour",
+    "labor",
 }
 
 CORRECTION_EXPLANATION_RE = re.compile(
@@ -1835,6 +1856,131 @@ def _is_custom_domestic_dataset(dataset_id: str) -> bool:
     return _custom_domestic_flow(dataset_id) is not None
 
 
+def _resolve_dcceew_dataset_python(
+    *,
+    flow: Dict[str, Any],
+    data_key: str,
+    detail: str,
+) -> Dict[str, Any]:
+    source_url = str(flow.get("sourceUrl") or "").strip()
+    if not source_url:
+        raise RuntimeError(f"Custom flow {flow.get('id') or ''} is missing sourceUrl.")
+
+    parser_path = Path(__file__).resolve().parents[2] / "scripts" / "dcceew_aes_xlsx.py"
+    if not parser_path.exists():
+        raise RuntimeError(f"DCCEEW parser script not found at {parser_path}.")
+
+    logger.info(
+        "DCCEEW python retrieval start datasetId=%s sourceUrl=%s retrievalMethod=%s",
+        str(flow.get("id") or "").strip(),
+        source_url,
+        "python_backend_requests_fetch_wsl" if os.name == "nt" else "python_backend_requests_fetch",
+    )
+
+    temp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="dcceew-aes-", suffix=".xlsx", delete=False) as handle:
+            temp_path = Path(handle.name)
+
+        if os.name == "nt":
+            windows_temp_path = temp_path.as_posix()
+            wsl_target = subprocess.run(
+                ["wsl.exe", "wslpath", "-a", windows_temp_path],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout.strip()
+            download_script = (
+                "import requests, sys; "
+                "url=sys.argv[1]; out=sys.argv[2]; "
+                "r=requests.get(url, headers={'User-Agent':'Mozilla/5.0'}, timeout=(20,60)); "
+                "r.raise_for_status(); "
+                "data=r.content; "
+                "assert len(data) >= 4 and data[:2] == b'PK'; "
+                "open(out,'wb').write(data); "
+                "print(len(data))"
+            )
+            download_cmd = ["wsl.exe", "python3", "-c", download_script, source_url, wsl_target]
+            retrieval_method = "python_backend_requests_fetch_wsl"
+        else:
+            response = requests.get(
+                source_url,
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=(20, 60),
+            )
+            response.raise_for_status()
+            payload = response.content
+            if len(payload) < 4 or payload[:2] != b"PK":
+                raise RuntimeError("Downloaded DCCEEW payload is not a valid XLSX workbook.")
+            temp_path.write_bytes(payload)
+            download_cmd = None
+            retrieval_method = "python_backend_requests_fetch"
+
+        if download_cmd is not None:
+            completed_download = subprocess.run(
+                download_cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            logger.info(
+                "DCCEEW workbook download complete datasetId=%s retrievalMethod=%s bytes=%s",
+                str(flow.get("id") or "").strip(),
+                retrieval_method,
+                str(completed_download.stdout or "").strip(),
+            )
+
+        command = [
+            settings.python_binary,
+            str(parser_path),
+            "resolve",
+            "--xlsx",
+            str(temp_path),
+            "--dataset-id",
+            str(flow.get("id") or "").strip(),
+            "--agency-id",
+            str(flow.get("agencyID") or "").strip(),
+            "--version",
+            str(flow.get("version") or "").strip(),
+            "--name",
+            str(flow.get("name") or "").strip(),
+            "--description",
+            str(flow.get("description") or "").strip(),
+            "--data-key",
+            data_key or "all",
+            "--detail",
+            detail or "full",
+            "--curation-json",
+            json.dumps(flow.get("curation") or {}),
+        ]
+        completed = subprocess.run(
+            command,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        logger.info(
+            "DCCEEW python retrieval complete datasetId=%s retrievalMethod=%s",
+            str(flow.get("id") or "").strip(),
+            retrieval_method,
+        )
+        return json.loads(completed.stdout)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "DCCEEW parser failed. "
+            f"stdout={str(exc.stdout or '')[:1000]!r} stderr={str(exc.stderr or '')[:1000]!r}"
+        ) from exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def _build_domestic_source_references(dataset_id: str, title: str = "") -> List[Dict[str, Any]]:
     custom_flow = _custom_domestic_flow(dataset_id)
     if not custom_flow:
@@ -2414,6 +2560,38 @@ def _bridge_error_status_code(exc: Exception) -> Optional[int]:
         return None
 
 
+def _expand_abs_shortlist_query(search_query: str) -> str:
+    raw_query = str(search_query or "").strip()
+    if not raw_query:
+        return raw_query
+
+    lowered = raw_query.lower()
+    expanded_parts: List[str] = [raw_query]
+
+    if any(term in lowered for term in EMPLOYMENT_INTENT_TERMS):
+        extras = [
+            "labour force",
+            "labour account",
+            "employed persons",
+            "employment by industry",
+            "industry division",
+            "monthly",
+            "quarterly",
+            "time series",
+        ]
+        for extra in extras:
+            if extra not in lowered:
+                expanded_parts.append(extra)
+
+    if "manufacturing" in lowered and "anzsic division c" not in lowered:
+        expanded_parts.append("ANZSIC Division C")
+
+    if any(phrase in lowered for phrase in ("across time", "over time")) and "time series" not in lowered:
+        expanded_parts.append("time series")
+
+    return " ".join(part for part in expanded_parts if part).strip()
+
+
 def _fallback_tstest_filters(filters: Dict[str, List[str]]) -> List[Dict[str, List[str]]]:
     selected = filters.get("TSEST") or []
     if len(selected) != 1:
@@ -2480,6 +2658,49 @@ def _build_retrieval_summary(
         f"Created artifact: {artifact_id}. Use the sandbox tool to inspect, filter, aggregate or calculate."
     )
     return "\n".join(lines)
+
+
+def _refresh_abs_shortlist(
+    *,
+    state,
+    conversation_id: str,
+    route: str,
+    shortlist_query: str,
+) -> List[Dict[str, Any]]:
+    effective_query = _expand_abs_shortlist_query(shortlist_query)
+    if effective_query != shortlist_query:
+        logger.info(
+            'ABS shortlist query expanded cid=%s original="%s" expanded="%s"',
+            conversation_id,
+            _truncate(shortlist_query, 220),
+            _truncate(effective_query, 320),
+        )
+    logger.info(
+        'Post-route ABS shortlist start cid=%s route=%s query="%s"',
+        conversation_id,
+        route,
+        _truncate(effective_query, 220),
+    )
+    shortlist_payload = _build_discover_payload(effective_query, limit=40)
+    shortlist_items = shortlist_payload.get("datasets") if isinstance(shortlist_payload, dict) else []
+    refreshed_shortlist = [item for item in _to_list(shortlist_items) if isinstance(item, dict)]
+    state.current_abs_dataset_shortlist = list(refreshed_shortlist)
+    shortlist_record = _persist_shortlist_artifact(
+        state=state,
+        conversation_id=conversation_id,
+        kind="abs_dataset_shortlist",
+        query=effective_query,
+        candidates=refreshed_shortlist,
+    )
+    logger.info(
+        "Post-route ABS shortlist ready cid=%s route=%s count=%s artifact=%s top=%s",
+        conversation_id,
+        route,
+        len(refreshed_shortlist),
+        shortlist_record["artifact_id"],
+        [str(item.get("dataset_id") or "").strip() for item in refreshed_shortlist[:3]],
+    )
+    return refreshed_shortlist
 
 
 def _execute_abs_data_tool(
@@ -2619,14 +2840,46 @@ def _execute_abs_data_tool(
                 request_descriptor,
             )
         try:
-            resolved_payload = resolve_dataset(
-                dataset_id=dataset_id,
-                data_key=data_key,
-                start_period=start_period,
-                end_period=end_period,
-                detail=detail,
-                dimension_at_observation=dimension_at_observation,
-            )
+            if is_custom_domestic:
+                custom_flow = _custom_domestic_flow(dataset_id) or {}
+                flow_type = str(custom_flow.get("flowType") or "").strip()
+                if flow_type == "dcceew_aes_xlsx":
+                    logger.info(
+                        "AUS custom raw_retrieve python resolve cid=%s datasetId=%s dataKey=%s flowType=%s",
+                        conversation_id,
+                        dataset_id,
+                        data_key or "all",
+                        flow_type,
+                    )
+                    resolved_payload = _resolve_dcceew_dataset_python(
+                        flow=custom_flow,
+                        data_key=data_key,
+                        detail=detail,
+                    )
+                else:
+                    logger.info(
+                        "AUS custom raw_retrieve direct bridge resolve cid=%s datasetId=%s dataKey=%s",
+                        conversation_id,
+                        dataset_id,
+                        data_key or "all",
+                    )
+                    resolved_payload = resolve_dataset(
+                        dataset_id=dataset_id,
+                        data_key=data_key,
+                        start_period=start_period,
+                        end_period=end_period,
+                        detail=detail,
+                        dimension_at_observation=dimension_at_observation,
+                    )
+            else:
+                resolved_payload = resolve_dataset(
+                    dataset_id=dataset_id,
+                    data_key=data_key,
+                    start_period=start_period,
+                    end_period=end_period,
+                    detail=detail,
+                    dimension_at_observation=dimension_at_observation,
+                )
         except Exception as exc:
             logger.error(
                 'AUS raw_retrieve error cid=%s datasetId=%s dataKey=%s request="%s" error="%s"',
@@ -3702,32 +3955,11 @@ def generate_response(
 
             if not pre_run_dataset_shortlist and selected_provider_route == "aus":
                 shortlist_query = selected_route_query or active_user_message
-                logger.info(
-                    'Post-route ABS shortlist start cid=%s route=%s query="%s"',
-                    conversation_id,
-                    selected_provider_route,
-                    _truncate(shortlist_query, 220),
-                )
-                shortlist_payload = _build_discover_payload(shortlist_query, limit=40)
-                shortlist_items = shortlist_payload.get("datasets") if isinstance(shortlist_payload, dict) else []
-                pre_run_dataset_shortlist = [
-                    item for item in _to_list(shortlist_items) if isinstance(item, dict)
-                ]
-                state.current_abs_dataset_shortlist = list(pre_run_dataset_shortlist)
-                shortlist_record = _persist_shortlist_artifact(
+                pre_run_dataset_shortlist = _refresh_abs_shortlist(
                     state=state,
                     conversation_id=conversation_id,
-                    kind="abs_dataset_shortlist",
-                    query=shortlist_query,
-                    candidates=pre_run_dataset_shortlist,
-                )
-                logger.info(
-                    "Post-route ABS shortlist ready cid=%s route=%s count=%s artifact=%s top=%s",
-                    conversation_id,
-                    selected_provider_route,
-                    len(pre_run_dataset_shortlist),
-                    shortlist_record["artifact_id"],
-                    [str(item.get("dataset_id") or "").strip() for item in pre_run_dataset_shortlist[:3]],
+                    route=selected_provider_route,
+                    shortlist_query=shortlist_query,
                 )
             if not pre_run_macro_indicator_shortlist and selected_provider_route == "macro":
                 shortlist_query = selected_route_query or active_user_message
@@ -4055,6 +4287,19 @@ def generate_response(
                     if resolved_route == "aus":
                         pre_run_macro_indicator_shortlist = []
                         state.current_macro_indicator_shortlist = []
+                        refresh_query = selected_route_query or active_user_message
+                        logger.info(
+                            'Provider route requested ABS shortlist refresh cid=%s route=%s query="%s"',
+                            conversation_id,
+                            resolved_route,
+                            _truncate(refresh_query, 220),
+                        )
+                        pre_run_dataset_shortlist = _refresh_abs_shortlist(
+                            state=state,
+                            conversation_id=conversation_id,
+                            route=resolved_route,
+                            shortlist_query=refresh_query,
+                        )
             if step["id"] == "macro_data_tool" and isinstance(result_data, dict):
                 result_kind = str(result_data.get("kind") or "").strip()
                 if result_kind == "macro_indicator_shortlist":

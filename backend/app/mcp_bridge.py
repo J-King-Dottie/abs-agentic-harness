@@ -43,6 +43,7 @@ SAFE_ENV_KEYS = {
 }
 
 BRIDGE_COMMAND_TIMEOUT_SECONDS = 120
+CUSTOM_DOMESTIC_BRIDGE_TIMEOUT_SECONDS = 180
 
 
 class MCPBridgeError(RuntimeError):
@@ -246,6 +247,105 @@ def _run_bridge(command: str, payload: Optional[Dict[str, Any]] = None) -> Any:
         )
 
 
+def _run_bridge_direct(
+    command: str,
+    payload: Optional[Dict[str, Any]] = None,
+    *,
+    timeout_seconds: int,
+    log_label: str,
+) -> Any:
+    settings = get_settings()
+    bridge_path = settings.mcp_bridge_path
+    if not bridge_path.exists():
+        raise MCPBridgeError(
+            f"MCP bridge executable not found at {bridge_path}. Run `npm run build` first."
+        )
+
+    args = [settings.node_binary, str(bridge_path), command]
+    if payload is not None:
+        args.append(json.dumps(payload))
+
+    env = {key: value for key, value in os.environ.items() if key in SAFE_ENV_KEYS}
+    env["MCP_BRIDGE_COMPACT"] = "1"
+
+    logger.info(
+        "Bridge direct command start label=%s command=%s payload=%s timeout_s=%s",
+        log_label,
+        command,
+        json.dumps(payload or {}, ensure_ascii=True)[:1000],
+        timeout_seconds,
+    )
+    logger.info(
+        "Bridge direct argv label=%s argv=%s",
+        log_label,
+        json.dumps(args, ensure_ascii=True)[:1500],
+    )
+
+    try:
+        completed = subprocess.run(
+            args,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        logger.error(
+            "Bridge direct timeout label=%s command=%s timeout_s=%s stdout=%r stderr=%r",
+            log_label,
+            command,
+            timeout_seconds,
+            str(stdout)[:1000],
+            str(stderr)[:1000],
+        )
+        raise MCPBridgeError(
+            f"MCP bridge direct call timed out for command '{command}' after {timeout_seconds} seconds.\n"
+            f"STDOUT (first 1000 chars): {str(stdout)[:1000]}\n"
+            f"STDERR (first 1000 chars): {str(stderr)[:1000]}",
+            stdout=str(stdout),
+            stderr=str(stderr),
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        logger.error(
+            "Bridge direct error label=%s command=%s returncode=%s stdout=%r stderr=%r",
+            log_label,
+            command,
+            exc.returncode,
+            stdout[:1000],
+            stderr[:1000],
+        )
+        raise MCPBridgeError(
+            f"MCP bridge direct call failed for command '{command}'.\nSTDOUT (first 1000 chars): {stdout[:1000]}\nSTDERR (first 1000 chars): {stderr[:1000]}",
+            stdout=stdout,
+            stderr=stderr,
+        ) from exc
+
+    output = completed.stdout.strip()
+    logger.info(
+        "Bridge direct command complete label=%s command=%s stdout_len=%s",
+        log_label,
+        command,
+        len(output),
+    )
+    if not output:
+        return None
+
+    cleaned_output = ANSI_ESCAPE_RE.sub("", output).strip()
+    try:
+        return json.loads(cleaned_output)
+    except json.JSONDecodeError as exc:
+        raise MCPBridgeError(
+            f"Bridge direct command '{command}' returned invalid JSON. Raw output (first 1000 chars): {output[:1000]}",
+            stdout=output,
+            stderr=str(exc),
+        ) from exc
+
+
 def list_dataflows(
     force_refresh: bool = False,
     search_query: Optional[str] = None,
@@ -316,3 +416,28 @@ def resolve_dataset(
     # Remove None values for cleaner payloads
     payload = {key: value for key, value in payload.items() if value is not None}
     return _run_bridge("resolve-dataset", payload)
+
+
+def resolve_custom_domestic_dataset_direct(
+    dataset_id: str,
+    data_key: Optional[str] = None,
+    start_period: Optional[str] = None,
+    end_period: Optional[str] = None,
+    detail: Optional[str] = None,
+    dimension_at_observation: Optional[str] = None,
+) -> Any:
+    payload = {
+        "datasetId": dataset_id,
+        "dataKey": data_key,
+        "startPeriod": start_period,
+        "endPeriod": end_period,
+        "detail": detail,
+        "dimensionAtObservation": dimension_at_observation,
+    }
+    payload = {key: value for key, value in payload.items() if value is not None}
+    return _run_bridge_direct(
+        "resolve-dataset",
+        payload,
+        timeout_seconds=CUSTOM_DOMESTIC_BRIDGE_TIMEOUT_SECONDS,
+        log_label=f"custom_domestic:{dataset_id}",
+    )

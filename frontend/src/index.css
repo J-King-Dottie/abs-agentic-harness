@@ -335,9 +335,17 @@ body {
   margin-bottom: 2rem;
 }
 
+.assistant-meta-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.8rem;
+}
+
 .assistant-run-cost-wrap {
   display: inline-flex;
-  margin-top: 0.8rem;
+  align-items: center;
+  margin-top: 0;
 }
 
 .assistant-run-cost-trigger {
@@ -351,6 +359,24 @@ body {
   color: rgba(30, 43, 33, 0.44);
   font-size: 0.74rem;
   line-height: 1.35;
+}
+
+.assistant-export-link,
+.assistant-export-pending {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistant-export-link a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.assistant-export-link svg {
+  display: block;
 }
 
 .assistant-run-cost-tooltip {

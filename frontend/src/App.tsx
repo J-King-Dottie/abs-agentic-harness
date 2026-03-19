@@ -790,6 +790,8 @@ function loadSavedSession() {
     const parsed = JSON.parse(raw) as {
       conversationId?: unknown;
       messages?: unknown;
+      latestExportUrl?: unknown;
+      latestExportStatus?: unknown;
     };
     const conversationId =
       typeof parsed.conversationId === "string" && parsed.conversationId.trim()
@@ -807,7 +809,11 @@ function loadSavedSession() {
             typeof (message as ChatMessage).content === "string"
         )
       : [];
-    return { conversationId, messages };
+    const latestExportUrl =
+      typeof parsed.latestExportUrl === "string" ? parsed.latestExportUrl.trim() : "";
+    const latestExportStatus =
+      typeof parsed.latestExportStatus === "string" ? parsed.latestExportStatus.trim().toLowerCase() : "";
+    return { conversationId, messages, latestExportUrl, latestExportStatus };
   } catch {
     return null;
   }
@@ -1090,8 +1096,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [queuedMessage, setQueuedMessage] = useState("");
   const [queuedMode, setQueuedMode] = useState<"" | "queued" | "steer">("");
-  const [latestExportUrl, setLatestExportUrl] = useState("");
-  const [latestExportStatus, setLatestExportStatus] = useState("");
+  const [latestExportUrl, setLatestExportUrl] = useState(savedSession?.latestExportUrl ?? "");
+  const [latestExportStatus, setLatestExportStatus] = useState(savedSession?.latestExportStatus ?? "");
   const scrollRef = useRef<HTMLElement | null>(null);
   const pendingRef = useRef<PendingMessage | null>(null);
   const lastProgressRef = useRef("");
@@ -1209,9 +1215,11 @@ function App() {
       JSON.stringify({
         conversationId,
         messages: completedMessages,
+        latestExportUrl,
+        latestExportStatus,
       })
     );
-  }, [conversationId, messages]);
+  }, [conversationId, messages, latestExportUrl, latestExportStatus]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !conversationId) {
@@ -1803,22 +1811,24 @@ function App() {
                 {message.content ? (
                   <div className="assistant-text-block">
                     {renderContentBlocks(message.content)}
-                    {renderRunCost(message.runCost)}
-                    {!isStreaming && latestExportUrl && index === lastCompletedAssistantIndex ? (
-                      <div className="assistant-export-link">
-                        <a href={`${API_BASE}${latestExportUrl}`} target="_blank" rel="noreferrer" aria-label="Download Excel export">
-                          <svg viewBox="0 0 24 24" aria-hidden="true">
-                            <path fill="currentColor" d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Zm0 1.5L17.5 7H14ZM9.2 10.6h1.6l1.3 2.2 1.3-2.2H15l-2.1 3.2 2.2 3.6h-1.7l-1.4-2.4-1.4 2.4H8.9l2.2-3.6Z"/>
-                          </svg>
-                        </a>
-                      </div>
-                    ) : !isStreaming &&
-                      latestExportStatus === "processing" &&
-                      index === lastCompletedAssistantIndex ? (
-                      <div className="assistant-export-pending" aria-live="polite" aria-label="Preparing Excel export">
-                        <span className="assistant-export-spinner" aria-hidden="true" />
-                      </div>
-                    ) : null}
+                    <div className="assistant-meta-row">
+                      {renderRunCost(message.runCost)}
+                      {!isStreaming && latestExportUrl && index === lastCompletedAssistantIndex ? (
+                        <div className="assistant-export-link">
+                          <a href={`${API_BASE}${latestExportUrl}`} target="_blank" rel="noreferrer" aria-label="Download Excel export">
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <path fill="currentColor" d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7Zm0 1.5L17.5 7H14ZM9.2 10.6h1.6l1.3 2.2 1.3-2.2H15l-2.1 3.2 2.2 3.6h-1.7l-1.4-2.4-1.4 2.4H8.9l2.2-3.6Z"/>
+                            </svg>
+                          </a>
+                        </div>
+                      ) : !isStreaming &&
+                        latestExportStatus === "processing" &&
+                        index === lastCompletedAssistantIndex ? (
+                        <div className="assistant-export-pending" aria-live="polite" aria-label="Preparing Excel export">
+                          <span className="assistant-export-spinner" aria-hidden="true" />
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
                 ) : (
                   <div className="thinking-line" aria-live="polite" aria-label="Thinking">

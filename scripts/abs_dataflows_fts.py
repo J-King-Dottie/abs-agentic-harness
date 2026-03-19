@@ -32,6 +32,7 @@ STOPWORDS = {
     "which",
     "where",
 }
+FTS_SCHEMA_VERSION = "catalog_enrichment_v2"
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,6 +42,11 @@ def parse_args() -> argparse.Namespace:
         "--custom-json-cache",
         required=False,
         help="Optional path to custom domestic dataflows JSON",
+    )
+    parser.add_argument(
+        "--enrichment-json-cache",
+        required=False,
+        help="Optional path to catalog enrichment JSON",
     )
     parser.add_argument("--db", required=True, help="Path to local SQLite FTS database")
     parser.add_argument("--query", required=True, help="Search query")
@@ -64,6 +70,28 @@ def load_flows(json_cache_path: Path, custom_json_cache_path: Path | None = None
     if custom_json_cache_path and custom_json_cache_path.exists():
         flows = load_flows_from_cache(custom_json_cache_path) + flows
     return flows
+
+
+def load_enrichments(enrichment_json_cache_path: Path | None = None) -> dict[str, str]:
+    if not enrichment_json_cache_path or not enrichment_json_cache_path.exists():
+        return {}
+    payload = json.loads(enrichment_json_cache_path.read_text(encoding="utf-8"))
+    items = payload.get("enrichments") if isinstance(payload, dict) else []
+    result: dict[str, str] = {}
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        dataset_id = str(item.get("datasetId") or "").strip()
+        if not dataset_id:
+            continue
+        topics = item.get("topics") if isinstance(item.get("topics"), list) else []
+        search_terms = item.get("searchTerms") if isinstance(item.get("searchTerms"), list) else []
+        notes = str(item.get("notes") or "").strip()
+        parts = [str(term).strip() for term in topics + search_terms if str(term).strip()]
+        if notes:
+            parts.append(notes)
+        result[dataset_id] = " ".join(parts).strip()
+    return result
 
 
 def normalize_tokens(query: str) -> list[str]:
@@ -114,7 +142,7 @@ def execute_match_search(
         FROM dataflows_fts f
         JOIN dataflows d ON d.rowid = f.rowid
         WHERE dataflows_fts MATCH ?
-        ORDER BY bm25(dataflows_fts, 5.0, 3.0, 1.5), d.dataset_id
+        ORDER BY bm25(dataflows_fts, 5.0, 3.0, 1.5, 2.5), d.dataset_id
         LIMIT ?
         """,
         (match_query, max(1, limit)),
@@ -138,6 +166,7 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             version TEXT,
             name TEXT,
             description TEXT,
+            search_text TEXT,
             flow_type TEXT,
             source_type TEXT,
             source_url TEXT,
@@ -150,6 +179,7 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
             dataset_id,
             name,
             description,
+            search_text,
             content='dataflows',
             content_rowid='rowid'
         );
@@ -160,6 +190,7 @@ def ensure_schema(connection: sqlite3.Connection) -> None:
         for row in connection.execute("PRAGMA table_info(dataflows)").fetchall()
     }
     required_columns = {
+        "search_text": "TEXT",
         "flow_type": "TEXT",
         "source_type": "TEXT",
         "source_url": "TEXT",
@@ -183,15 +214,29 @@ def build_cache_signature(json_cache_path: Path, custom_json_cache_path: Path | 
     return "|".join(parts)
 
 
+def build_full_cache_signature(
+    json_cache_path: Path,
+    custom_json_cache_path: Path | None = None,
+    enrichment_json_cache_path: Path | None = None,
+) -> str:
+    parts = [FTS_SCHEMA_VERSION, build_cache_signature(json_cache_path, custom_json_cache_path)]
+    if enrichment_json_cache_path and enrichment_json_cache_path.exists():
+        parts.append(
+            f"{enrichment_json_cache_path.stat().st_mtime_ns}:{enrichment_json_cache_path.stat().st_size}"
+        )
+    return "|".join(parts)
+
+
 def index_is_stale(
     connection: sqlite3.Connection,
     json_cache_path: Path,
     custom_json_cache_path: Path | None = None,
+    enrichment_json_cache_path: Path | None = None,
 ) -> bool:
     row = connection.execute(
         "SELECT value FROM meta WHERE key = 'json_cache_signature'"
     ).fetchone()
-    signature = build_cache_signature(json_cache_path, custom_json_cache_path)
+    signature = build_full_cache_signature(json_cache_path, custom_json_cache_path, enrichment_json_cache_path)
     return row is None or row[0] != signature
 
 
@@ -199,9 +244,11 @@ def rebuild_index(
     connection: sqlite3.Connection,
     json_cache_path: Path,
     custom_json_cache_path: Path | None = None,
+    enrichment_json_cache_path: Path | None = None,
 ) -> None:
     flows = load_flows(json_cache_path, custom_json_cache_path)
-    signature = build_cache_signature(json_cache_path, custom_json_cache_path)
+    enrichments = load_enrichments(enrichment_json_cache_path)
+    signature = build_full_cache_signature(json_cache_path, custom_json_cache_path, enrichment_json_cache_path)
 
     with connection:
         connection.execute("DELETE FROM dataflows_fts")
@@ -214,13 +261,14 @@ def rebuild_index(
                 version,
                 name,
                 description,
+                search_text,
                 flow_type,
                 source_type,
                 source_url,
                 source_page_url,
                 source_organization,
                 requires_metadata_before_retrieval
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 (
@@ -229,6 +277,7 @@ def rebuild_index(
                     flow.get("version", ""),
                     flow.get("name", ""),
                     flow.get("description", ""),
+                    enrichments.get(str(flow.get("id", "")).strip(), ""),
                     flow.get("flowType", ""),
                     flow.get("sourceType", ""),
                     flow.get("sourceUrl", ""),
@@ -241,8 +290,8 @@ def rebuild_index(
         )
         connection.execute(
             """
-            INSERT INTO dataflows_fts(rowid, dataset_id, name, description)
-            SELECT rowid, dataset_id, name, description
+            INSERT INTO dataflows_fts(rowid, dataset_id, name, description, search_text)
+            SELECT rowid, dataset_id, name, description, search_text
             FROM dataflows
             """
         )
@@ -321,14 +370,17 @@ def main() -> None:
     custom_json_cache_path = (
         Path(args.custom_json_cache).resolve() if args.custom_json_cache else None
     )
+    enrichment_json_cache_path = (
+        Path(args.enrichment_json_cache).resolve() if args.enrichment_json_cache else None
+    )
     db_path = Path(args.db).resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     connection = sqlite3.connect(db_path)
     try:
         ensure_schema(connection)
-        if index_is_stale(connection, json_cache_path, custom_json_cache_path):
-            rebuild_index(connection, json_cache_path, custom_json_cache_path)
+        if index_is_stale(connection, json_cache_path, custom_json_cache_path, enrichment_json_cache_path):
+            rebuild_index(connection, json_cache_path, custom_json_cache_path, enrichment_json_cache_path)
         result = search(connection, args.query, args.limit)
     finally:
         connection.close()

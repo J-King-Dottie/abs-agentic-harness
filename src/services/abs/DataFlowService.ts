@@ -31,6 +31,7 @@ export class DataFlowService {
     private readonly rbaTablesCsvService: RbaTablesCsvService;
     private readonly ftsDbPath: string;
     private readonly ftsScriptPath: string;
+    private readonly enrichmentFilePath: string;
     private readonly legacyFtsDbPaths: string[];
 
     constructor(cacheFilePath: string, refreshIntervalHours: number = 24) {
@@ -43,6 +44,7 @@ export class DataFlowService {
         this.rbaTablesCsvService = new RbaTablesCsvService(path.dirname(resolvedCachePath));
         this.ftsDbPath = path.join(path.dirname(resolvedCachePath), 'AUS_DOMESTIC_DATAFLOWS_FTS.sqlite3');
         this.ftsScriptPath = path.join(path.dirname(resolvedCachePath), 'scripts', 'abs_dataflows_fts.py');
+        this.enrichmentFilePath = path.join(path.dirname(resolvedCachePath), 'CATALOG_ENRICHMENTS.json');
         this.legacyFtsDbPaths = [
             path.join(path.dirname(resolvedCachePath), 'ABS_DATAFLOWS_FTS.sqlite3'),
             path.join(path.dirname(resolvedCachePath), 'ABS_DATAFLOWS_FTS_v2.sqlite3')
@@ -54,6 +56,7 @@ export class DataFlowService {
             refreshIntervalHours,
             refreshIntervalMs: this.refreshIntervalMs,
             ftsDbPath: this.ftsDbPath,
+            enrichmentFilePath: this.enrichmentFilePath,
             legacyFtsDbPaths: this.legacyFtsDbPaths,
             ftsScriptPath: this.ftsScriptPath
         });
@@ -264,6 +267,8 @@ export class DataFlowService {
             this.cacheFilePath,
             '--custom-json-cache',
             this.customCacheFilePath,
+            '--enrichment-json-cache',
+            this.enrichmentFilePath,
             '--db',
             this.ftsDbPath,
             '--query',
