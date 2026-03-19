@@ -8,6 +8,17 @@ Nisaba started with ABS at the core, and ABS remains central. But the project is
 
 Global macro sources such as the OECD, World Bank, and IMF are included for comparison and context. They matter, but they are not the point. The point is depth on Australia.
 
+Current source summary:
+
+| Route | Provider | Datasets |
+| --- | --- | ---: |
+| Domestic | ABS | 1,221 |
+| Domestic | DCCEEW | 1 |
+| Domestic | RBA | 71 |
+| Macro | OECD | 1,464 |
+| Macro | World Bank | 28,377 |
+| Macro | IMF | 132 |
+
 ## Why This Exists
 
 MCP servers plugged into agentic frameworks like Claude Code or Codex are genuinely powerful. If you are technical, willing to wire tools together, comfortable with API keys, and happy to prompt an agent directly, you can do very sophisticated work that way.
@@ -26,21 +37,11 @@ If you do not want to pay, download the repo and run it locally with your own AP
 
 ## Product Direction
 
-Nisaba is being built as an expert Australian data harness with:
+Nisaba is being built as an expert Australian data harness with deep coverage and growing support for Australian publically available data sources.
 
-- deep ABS coverage
-- growing support for custom Australian public sources
-- global macro context where comparison is useful
-- transparent retrieval, analysis, and sourcing
+We want Nisaba to become the strongest integrated AI harness for Australian data in the world. We believe only open source can achieve this.
 
-Over time, the project should expand to cover a broader and broader range of detailed Australian public data sources.
-
-The long-run ambition is simple:
-
-- make Nisaba the strongest integrated AI harness for Australian data in the world
-
-That means careful source integration, not vague claims of coverage.
-Each new source should be useful, grounded, and actually retrievable.
+If you find Nisaba useful, want a new source integrated, or want to improve the harness, submit a pull request.
 
 ## What It Does
 
@@ -52,46 +53,6 @@ Under the hood, Nisaba:
 4. inspects and narrows the returned data
 5. runs calculations in a Python sandbox where needed
 6. returns grounded answers with charts, tables, and source references
-
-Nisaba currently has two high-level retrieval routes:
-
-- `aus`
-  - Australian domestic retrieval
-  - includes ABS API data and curated custom Australian public sources
-- `macro`
-  - global macro retrieval
-  - includes sources such as OECD, World Bank, and IMF
-
-## Open Source
-
-The backend is open source and can be run locally.
-
-This project is also deliberately open to contribution. If there is another Australian public dataset or source you want available in Nisaba, open an issue or submit a pull request. Useful, working source integrations are welcome.
-
-The standard is straightforward:
-
-- the integration should be real
-- the source should be public
-- the retrieval path should work
-
-
-## Underlying Tooling
-
-This repo builds on top of strong open-source retrieval work. Credit is due to:
-
-- [`mcp-server-abs`](https://github.com/seansoreilly/mcp-server-abs)
-- [`openecon-data`](https://github.com/hanlulong/openecon-data)
-
-Nisaba uses ABS retrieval built on top of `mcp-server-abs`, and its broader macro flow is informed by the retrieval, catalog, and routing ideas developed in `openecon-data`.
-
-## Stack
-
-- Australian domestic retrieval across ABS and custom Australian public sources
-- global macro retrieval for OECD / World Bank / IMF
-- web-search support for broader context when needed
-- Python sandbox for inspect, narrow, calculate, compare, and chart preparation
-- React frontend
-- FastAPI backend
 
 Produced by [Dottie AI Studio](https://dottieaistudio.com.au/).
 
@@ -132,10 +93,3 @@ If you want backend auto-reload:
 .\start-dev.ps1 -SkipInstall -Reload
 ```
 
-If the frontend fails with `'vite' is not recognized`, rebuild the frontend install and start dev again:
-
-```powershell
-Remove-Item -Recurse -Force .\frontend\node_modules; npm install --prefix .\frontend; .\start-dev.ps1
-```
-
-If you find it useful, want a new Australian source integrated, or want to improve the harness, open an issue or submit a pull request.

@@ -76,6 +76,11 @@ def _run_bridge(command: str, payload: Optional[Dict[str, Any]] = None) -> Any:
         if key in SAFE_ENV_KEYS
     }
     env["MCP_BRIDGE_COMPACT"] = "1"
+    logger.info(
+        "Bridge command start command=%s payload=%s",
+        command,
+        json.dumps(payload or {}, ensure_ascii=True)[:1000],
+    )
 
     try:
         completed = subprocess.run(
@@ -88,6 +93,14 @@ def _run_bridge(command: str, payload: Optional[Dict[str, Any]] = None) -> Any:
     except subprocess.CalledProcessError as exc:  # pragma: no cover - subprocess failure
         stdout = exc.stdout or ""
         stderr = exc.stderr or ""
+        logger.error(
+            "Bridge command error command=%s payload=%s returncode=%s stdout=%r stderr=%r",
+            command,
+            json.dumps(payload or {}, ensure_ascii=True)[:1000],
+            exc.returncode,
+            stdout[:1000],
+            stderr[:1000],
+        )
 
         raise MCPBridgeError(
             f"MCP bridge failed for command '{command}'.\nSTDOUT (first 1000 chars): {stdout[:1000]}\nSTDERR (first 1000 chars): {stderr[:1000]}",
@@ -96,6 +109,12 @@ def _run_bridge(command: str, payload: Optional[Dict[str, Any]] = None) -> Any:
         ) from exc
 
     output = completed.stdout.strip()
+    logger.info(
+        "Bridge command complete command=%s payload=%s stdout_len=%s",
+        command,
+        json.dumps(payload or {}, ensure_ascii=True)[:1000],
+        len(output),
+    )
     if not output:
         return None
 

@@ -12,7 +12,7 @@ from ..config import get_settings
 @dataclass
 class ConversationState:
     conversation_id: str
-    messages: List[Dict[str, str]] = field(default_factory=list)
+    messages: List[Dict[str, Any]] = field(default_factory=list)
     loop_history: List[Dict[str, Any]] = field(default_factory=list)
     artifacts: List[Dict[str, Any]] = field(default_factory=list)
     current_abs_dataset_shortlist: List[Dict[str, Any]] = field(default_factory=list)
@@ -30,6 +30,8 @@ class ConversationState:
     active_run_message_count: int | None = None
     active_run_loop_count: int | None = None
     active_run_artifact_count: int | None = None
+    last_provider_route: str = ""
+    last_provider_search_query: str = ""
 
 
 class ConversationStore:
@@ -78,6 +80,8 @@ class ConversationStore:
             active_run_message_count=raw.get("active_run_message_count") if isinstance(raw.get("active_run_message_count"), int) else None,
             active_run_loop_count=raw.get("active_run_loop_count") if isinstance(raw.get("active_run_loop_count"), int) else None,
             active_run_artifact_count=raw.get("active_run_artifact_count") if isinstance(raw.get("active_run_artifact_count"), int) else None,
+            last_provider_route=str(raw.get("last_provider_route") or ""),
+            last_provider_search_query=str(raw.get("last_provider_search_query") or ""),
         )
 
     def _save_to_disk(self, state: ConversationState) -> None:
@@ -102,6 +106,8 @@ class ConversationStore:
             "active_run_message_count": state.active_run_message_count,
             "active_run_loop_count": state.active_run_loop_count,
             "active_run_artifact_count": state.active_run_artifact_count,
+            "last_provider_route": state.last_provider_route,
+            "last_provider_search_query": state.last_provider_search_query,
         }
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

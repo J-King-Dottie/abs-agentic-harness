@@ -49,7 +49,7 @@ class PendingMessageRequest(BaseModel):
 
 class ConversationSnapshot(BaseModel):
     conversation_id: str
-    messages: list[dict[str, str]]
+    messages: list[dict[str, object]]
     run_status: str
     latest_progress: str
     latest_error: str
@@ -86,6 +86,13 @@ _RUN_TASKS: dict[str, asyncio.Task] = {}
 _EXPORT_TASKS: dict[str, asyncio.Task] = {}
 
 
+def _should_skip_request_logging(request: Request) -> bool:
+    path = request.url.path
+    if request.method.upper() == "GET" and path.startswith("/api/conversation/"):
+        return True
+    return False
+
+
 def _cors_origins() -> list[str]:
     raw = os.getenv("CORS_ALLOWED_ORIGINS", "")
     return [origin.strip() for origin in raw.split(",") if origin.strip()]
@@ -110,17 +117,21 @@ async def healthcheck():
 @app.middleware("http")
 async def runtime_request_logger(request: Request, call_next):
     started = time.perf_counter()
-    _emit_runtime_log(f"HTTP start {request.method} {request.url.path}")
+    skip_logging = _should_skip_request_logging(request)
+    if not skip_logging:
+        _emit_runtime_log(f"HTTP start {request.method} {request.url.path}")
     try:
         response = await call_next(request)
     except Exception:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        _emit_runtime_log(f"HTTP error {request.method} {request.url.path} after {elapsed_ms}ms")
+        if not skip_logging:
+            _emit_runtime_log(f"HTTP error {request.method} {request.url.path} after {elapsed_ms}ms")
         raise
     elapsed_ms = int((time.perf_counter() - started) * 1000)
-    _emit_runtime_log(
-        f"HTTP end {request.method} {request.url.path} status={response.status_code} duration_ms={elapsed_ms}"
-    )
+    if not skip_logging:
+        _emit_runtime_log(
+            f"HTTP end {request.method} {request.url.path} status={response.status_code} duration_ms={elapsed_ms}"
+        )
     return response
 
 

@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import logger from '../../utils/logger.js';
 import { ABSApiClient } from './ABSApiClient.js';
 import { DcceewAesService } from '../custom/DcceewAesService.js';
+import { RbaTablesCsvService } from '../custom/RbaTablesCsvService.js';
 const execFileAsync = promisify(execFile);
 export class DataFlowService {
     cache = null;
@@ -13,6 +14,7 @@ export class DataFlowService {
     refreshIntervalMs;
     apiClient;
     dcceewAesService;
+    rbaTablesCsvService;
     ftsDbPath;
     ftsScriptPath;
     legacyFtsDbPaths;
@@ -23,6 +25,7 @@ export class DataFlowService {
         this.refreshIntervalMs = refreshIntervalHours * 60 * 60 * 1000;
         this.apiClient = new ABSApiClient();
         this.dcceewAesService = new DcceewAesService(path.dirname(resolvedCachePath));
+        this.rbaTablesCsvService = new RbaTablesCsvService(path.dirname(resolvedCachePath));
         this.ftsDbPath = path.join(path.dirname(resolvedCachePath), 'AUS_DOMESTIC_DATAFLOWS_FTS.sqlite3');
         this.ftsScriptPath = path.join(path.dirname(resolvedCachePath), 'scripts', 'abs_dataflows_fts.py');
         this.legacyFtsDbPaths = [
@@ -77,6 +80,9 @@ export class DataFlowService {
         if (this.dcceewAesService.supports(flow)) {
             return this.dcceewAesService.query(flow, dataKey, options);
         }
+        if (this.rbaTablesCsvService.supports(flow)) {
+            return this.rbaTablesCsvService.query(flow, dataKey, options);
+        }
         return this.apiClient.getData(flowId, dataKey, options);
     }
     async resolveFlow(dataflowIdentifier, forceRefresh = false) {
@@ -118,6 +124,9 @@ export class DataFlowService {
         }
         if (this.dcceewAesService.supports(selectedFlow)) {
             return this.dcceewAesService.getMetadata(selectedFlow);
+        }
+        if (this.rbaTablesCsvService.supports(selectedFlow)) {
+            return this.rbaTablesCsvService.getMetadata(selectedFlow);
         }
         const structureRef = selectedFlow.structure ?? {
             id: selectedFlow.id,

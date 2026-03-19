@@ -2,6 +2,7 @@ import logger from '../../utils/logger.js';
 import { ABSApiClient } from './ABSApiClient.js';
 import { DataFlowService } from './DataFlowService.js';
 import { DcceewAesService } from '../custom/DcceewAesService.js';
+import { RbaTablesCsvService } from '../custom/RbaTablesCsvService.js';
 import {
     DataQueryOptions,
     DataFlow,
@@ -28,10 +29,12 @@ interface QueryContext {
 export class DatasetResolver {
     private readonly apiClient: ABSApiClient;
     private readonly dcceewAesService: DcceewAesService;
+    private readonly rbaTablesCsvService: RbaTablesCsvService;
 
     constructor(private readonly dataFlowService: DataFlowService) {
         this.apiClient = new ABSApiClient();
         this.dcceewAesService = new DcceewAesService(process.cwd());
+        this.rbaTablesCsvService = new RbaTablesCsvService(process.cwd());
     }
 
     async resolve(options: ResolveDatasetOptions): Promise<ResolvedDataset> {
@@ -59,6 +62,16 @@ export class DatasetResolver {
         const flow = await this.dataFlowService.resolveFlow(normalizedId, forceRefresh ?? false);
         if (this.dcceewAesService.supports(flow)) {
             return this.dcceewAesService.resolve(flow, {
+                dataKey,
+                startPeriod,
+                endPeriod,
+                detail: resolvedDetail,
+                dimensionAtObservation,
+                format: targetFormat,
+            });
+        }
+        if (this.rbaTablesCsvService.supports(flow)) {
+            return this.rbaTablesCsvService.resolve(flow, {
                 dataKey,
                 startPeriod,
                 endPeriod,

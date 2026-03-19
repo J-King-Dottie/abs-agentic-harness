@@ -25,6 +25,7 @@ def main() -> int:
         host=args.host,
         port=args.port,
         reload=args.reload,
+        access_log=False,
         **reload_kwargs,
     )
     return 0

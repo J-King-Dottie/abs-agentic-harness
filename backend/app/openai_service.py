@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from functools import lru_cache
 from html import unescape
 import json
 import logging
@@ -101,6 +102,10 @@ CORRECTION_EXPLANATION_RE = re.compile(
     re.IGNORECASE,
 )
 MAX_CONSECUTIVE_RECOVERY_FAILURES = 3
+GPT_5_4_INPUT_PRICE_PER_MILLION = 2.50
+GPT_5_4_CACHED_INPUT_PRICE_PER_MILLION = 0.25
+GPT_5_4_OUTPUT_PRICE_PER_MILLION = 15.00
+AI_COST_SURCHARGE_RATE = 0.10
 
 
 class ConversationCancelled(RuntimeError):
@@ -274,7 +279,85 @@ def _summarize_openai_response(response_data: Dict[str, Any]) -> str:
     return _truncate(json.dumps(summary, ensure_ascii=True), 1200)
 
 
-def _call_model(messages: List[Dict[str, str]], *, reasoning_effort: Optional[str] = None) -> str:
+def _safe_int(value: Any) -> int:
+    try:
+        numeric = int(value)
+    except Exception:
+        return 0
+    return numeric if numeric > 0 else 0
+
+
+def _extract_usage_totals(response_data: Dict[str, Any]) -> Dict[str, int]:
+    usage = response_data.get("usage") if isinstance(response_data.get("usage"), dict) else {}
+    input_tokens = _safe_int(usage.get("input_tokens"))
+    output_tokens = _safe_int(usage.get("output_tokens"))
+
+    if not input_tokens:
+        input_tokens = _safe_int(usage.get("prompt_tokens"))
+    if not output_tokens:
+        output_tokens = _safe_int(usage.get("completion_tokens"))
+
+    details = usage.get("input_tokens_details") if isinstance(usage.get("input_tokens_details"), dict) else {}
+    cached_input_tokens = _safe_int(details.get("cached_tokens"))
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cached_input_tokens": cached_input_tokens,
+    }
+
+
+def _compute_run_cost_breakdown(*, input_tokens: int, output_tokens: int, cached_input_tokens: int = 0) -> Dict[str, float]:
+    cached_tokens = min(max(cached_input_tokens, 0), max(input_tokens, 0))
+    uncached_input_tokens = max(input_tokens, 0) - cached_tokens
+    ai_cost = (
+        (uncached_input_tokens / 1_000_000) * GPT_5_4_INPUT_PRICE_PER_MILLION
+        + (cached_tokens / 1_000_000) * GPT_5_4_CACHED_INPUT_PRICE_PER_MILLION
+        + (max(output_tokens, 0) / 1_000_000) * GPT_5_4_OUTPUT_PRICE_PER_MILLION
+    )
+    surcharge = ai_cost * AI_COST_SURCHARGE_RATE
+    final_cost = ai_cost + surcharge
+    return {
+        "ai_cost_usd": round(ai_cost, 6),
+        "surcharge_usd": round(surcharge, 6),
+        "final_cost_usd": round(final_cost, 6),
+    }
+
+
+def _build_run_cost_payload(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cached_input_tokens: int = 0,
+    model: str | None = None,
+) -> Dict[str, Any]:
+    cached_tokens = min(max(cached_input_tokens, 0), max(input_tokens, 0))
+    breakdown = _compute_run_cost_breakdown(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cached_input_tokens=cached_tokens,
+    )
+    return {
+        "model": str(model or settings.openai_model or "gpt-5.4"),
+        "input_tokens": max(input_tokens, 0),
+        "cached_input_tokens": cached_tokens,
+        "output_tokens": max(output_tokens, 0),
+        "pricing": {
+            "input_per_million_usd": GPT_5_4_INPUT_PRICE_PER_MILLION,
+            "cached_input_per_million_usd": GPT_5_4_CACHED_INPUT_PRICE_PER_MILLION,
+            "output_per_million_usd": GPT_5_4_OUTPUT_PRICE_PER_MILLION,
+            "surcharge_rate": AI_COST_SURCHARGE_RATE,
+        },
+        **breakdown,
+    }
+
+
+def _call_model(
+    messages: List[Dict[str, str]],
+    *,
+    reasoning_effort: Optional[str] = None,
+    usage_callback: Optional[Callable[[Dict[str, int]], None]] = None,
+) -> str:
     openai_messages: List[Dict[str, Any]] = []
     for message in messages:
         role = str(message.get("role") or "user").strip().lower()
@@ -330,6 +413,8 @@ def _call_model(messages: List[Dict[str, str]], *, reasoning_effort: Optional[st
         )
 
     response_data = response.json()
+    if usage_callback:
+        usage_callback(_extract_usage_totals(response_data))
     text = _extract_openai_output_text(response_data)
     if not text:
         raise RuntimeError(
@@ -343,6 +428,7 @@ def _call_model_text(
     messages: List[Dict[str, str]],
     *,
     reasoning_effort: Optional[str] = None,
+    usage_callback: Optional[Callable[[Dict[str, int]], None]] = None,
 ) -> str:
     openai_messages: List[Dict[str, Any]] = []
     for message in messages:
@@ -396,6 +482,8 @@ def _call_model_text(
         )
 
     response_data = response.json()
+    if usage_callback:
+        usage_callback(_extract_usage_totals(response_data))
     text = _extract_openai_output_text(response_data)
     if not text:
         raise RuntimeError(
@@ -510,7 +598,13 @@ def _reset_context_after_user_correction(state, user_message: str) -> str:
     return correction_message
 
 
-def _compose_best_effort_final(conversation_id: str, user_message: str, state) -> str:
+def _compose_best_effort_final(
+    conversation_id: str,
+    user_message: str,
+    state,
+    *,
+    usage_callback: Optional[Callable[[Dict[str, int]], None]] = None,
+) -> str:
     payload = {
         "task": {
             "user_message": user_message,
@@ -537,7 +631,7 @@ def _compose_best_effort_final(conversation_id: str, user_message: str, state) -
         },
     ]
     try:
-        return _call_model(messages)
+        return _call_model(messages, usage_callback=usage_callback)
     except Exception as exc:
         logger.exception(
             "Best-effort final compose failed cid=%s error=%s",
@@ -865,6 +959,75 @@ def _write_table(sheet, headers: List[Any], rows: List[List[Any]]) -> None:
         sheet.append(row)
 
 
+def _flatten_resolved_dataset_for_export(dataset: Dict[str, Any]) -> tuple[List[str], List[List[Any]]]:
+    if not isinstance(dataset, dict):
+        return [], []
+
+    series_items = dataset.get("series")
+    if not isinstance(series_items, list):
+        return [], []
+
+    dimension_keys: List[str] = []
+    attribute_keys: List[str] = []
+    for series in series_items:
+        if not isinstance(series, dict):
+            continue
+        for key in (series.get("dimensions") or {}).keys():
+            if key not in dimension_keys:
+                dimension_keys.append(str(key))
+        for observation in series.get("observations") or []:
+            if not isinstance(observation, dict):
+                continue
+            for key in (observation.get("dimensions") or {}).keys():
+                if key not in dimension_keys:
+                    dimension_keys.append(str(key))
+            for key in (observation.get("attributes") or {}).keys():
+                if key not in attribute_keys:
+                    attribute_keys.append(str(key))
+        for key in (series.get("attributes") or {}).keys():
+            if key not in attribute_keys:
+                attribute_keys.append(str(key))
+
+    headers = ["seriesKey"] + dimension_keys + ["observationKey", "value"] + attribute_keys
+    rows: List[List[Any]] = []
+
+    def _label_or_value(value: Any) -> Any:
+        if isinstance(value, dict):
+            if value.get("label") is not None:
+                return value.get("label")
+            if value.get("code") is not None:
+                return value.get("code")
+        return value
+
+    for series in series_items:
+        if not isinstance(series, dict):
+            continue
+        series_dims = series.get("dimensions") if isinstance(series.get("dimensions"), dict) else {}
+        series_attrs = series.get("attributes") if isinstance(series.get("attributes"), dict) else {}
+        observations = series.get("observations") if isinstance(series.get("observations"), list) else []
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            obs_dims = observation.get("dimensions") if isinstance(observation.get("dimensions"), dict) else {}
+            obs_attrs = observation.get("attributes") if isinstance(observation.get("attributes"), dict) else {}
+            row: List[Any] = [series.get("seriesKey")]
+            for key in dimension_keys:
+                value = obs_dims.get(key)
+                if value is None:
+                    value = series_dims.get(key)
+                row.append(_label_or_value(value))
+            row.append(observation.get("observationKey"))
+            row.append(observation.get("value"))
+            for key in attribute_keys:
+                value = obs_attrs.get(key)
+                if value is None:
+                    value = series_attrs.get(key)
+                row.append(_label_or_value(value))
+            rows.append(row)
+
+    return headers, rows
+
+
 def _apply_export_theme(workbook) -> None:
     summary = workbook["Summary"] if "Summary" in workbook.sheetnames else None
     if summary is None:
@@ -934,12 +1097,27 @@ def _write_raw_artifact_sheet(sheet, record: Dict[str, Any]) -> None:
     sheet["A2"] = f"Call structure: {call_line}".strip()
     sheet["A3"] = ""
     sheet["A4"] = "Returned data"
+    tabular_headers: List[str] = []
+    tabular_rows: List[List[Any]] = []
+    if isinstance(payload, dict):
+        if str(record.get("kind") or "").strip() == "abs_resolved_dataset":
+            resolved_dataset = payload.get("resolved_dataset") if isinstance(payload.get("resolved_dataset"), dict) else {}
+            tabular_headers, tabular_rows = _flatten_resolved_dataset_for_export(resolved_dataset)
+        elif str(record.get("kind") or "").strip() == "macro_query_response":
+            response = payload.get("response") if isinstance(payload.get("response"), dict) else {}
+            tabular_headers, tabular_rows = _flatten_resolved_dataset_for_export(response)
+
     row_index = 5
-    if isinstance(payload, (dict, list)):
-        sheet.cell(row=row_index, column=1, value=_safe_sheet_text(json.dumps(payload, ensure_ascii=False, indent=2)))
+    if tabular_headers and tabular_rows:
+        _write_table(sheet, tabular_headers, tabular_rows)
+        for column in range(1, min(len(tabular_headers), 10) + 1):
+            sheet.column_dimensions[chr(64 + column)].width = 24
     else:
-        sheet.cell(row=row_index, column=1, value=_safe_sheet_text(str(payload or "")))
-    sheet.column_dimensions["A"].width = 140
+        if isinstance(payload, (dict, list)):
+            sheet.cell(row=row_index, column=1, value=_safe_sheet_text(json.dumps(payload, ensure_ascii=False, indent=2)))
+        else:
+            sheet.cell(row=row_index, column=1, value=_safe_sheet_text(str(payload or "")))
+        sheet.column_dimensions["A"].width = 140
     for row in sheet.iter_rows():
         for cell in row:
             cell.alignment = Alignment(wrap_text=False, vertical="top")
@@ -1271,7 +1449,9 @@ def _build_plan_state(state, *, user_message: str = "") -> Dict[str, Any]:
 
 def _normalize_provider_route(route: Any) -> str:
     clean = str(route or "").strip().lower()
-    return clean if clean in {"abs", "macro"} else ""
+    if clean == "abs":
+        return "aus"
+    return clean if clean in {"aus", "macro"} else ""
 
 
 def _detect_provider_route(user_message: str) -> Dict[str, str]:
@@ -1296,7 +1476,7 @@ def _detect_provider_route(user_message: str) -> Dict[str, str]:
     if has_abs_hint:
         return {
             "preferred_tool": "aus_metadata_tool",
-            "provider_route": "abs",
+            "provider_route": "aus",
             "routing_reason": "The query appears focused on Australian domestic data.",
         }
 
@@ -1305,6 +1485,13 @@ def _detect_provider_route(user_message: str) -> Dict[str, str]:
             "preferred_tool": "macro_data_tool",
             "provider_route": "macro",
             "routing_reason": "The query explicitly names a macro data provider.",
+        }
+
+    if has_foreign_country and not has_abs_hint:
+        return {
+            "preferred_tool": "macro_data_tool",
+            "provider_route": "macro",
+            "routing_reason": "The query names non-Australian countries and is more likely to need global macro sources.",
         }
 
     if has_macro_term and mentions_australia and has_foreign_country and has_comparison:
@@ -1323,7 +1510,7 @@ def _detect_provider_route(user_message: str) -> Dict[str, str]:
 
     return {
         "preferred_tool": "aus_metadata_tool",
-        "provider_route": "abs",
+        "provider_route": "aus",
         "routing_reason": "Defaulting to Australian domestic data retrieval first.",
     }
 def _summarize_tool_input(tool_input: Dict[str, Any]) -> str:
@@ -1608,17 +1795,96 @@ def _build_abs_source_references(dataset_id: str, title: str = "") -> List[Dict[
     ]
 
 
+@lru_cache(maxsize=1)
+def _load_custom_domestic_flows() -> Dict[str, Dict[str, Any]]:
+    custom_path = Path(__file__).resolve().parents[2] / "CUSTOM_AUS_DATAFLOWS.json"
+    if not custom_path.exists():
+        return {}
+    try:
+        payload = json.loads(custom_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    flows = payload.get("flows") if isinstance(payload, dict) else []
+    result: Dict[str, Dict[str, Any]] = {}
+    for item in _to_list(flows):
+        if not isinstance(item, dict):
+            continue
+        flow_id = str(item.get("id") or "").strip()
+        if flow_id:
+            result[flow_id] = item
+    return result
+
+
+def _base_dataset_id(dataset_id: str) -> str:
+    parts = [part.strip() for part in str(dataset_id or "").split(",") if part.strip()]
+    if len(parts) >= 2:
+        return parts[1]
+    return str(dataset_id or "").strip()
+
+
+def _custom_domestic_flow(dataset_id: str) -> Optional[Dict[str, Any]]:
+    base_id = _base_dataset_id(dataset_id)
+    if not base_id:
+        return None
+    return _load_custom_domestic_flows().get(base_id)
+
+
+def _is_custom_domestic_dataset(dataset_id: str) -> bool:
+    if str(dataset_id or "").startswith("CUSTOM_AUS,"):
+        return True
+    return _custom_domestic_flow(dataset_id) is not None
+
+
+def _build_domestic_source_references(dataset_id: str, title: str = "") -> List[Dict[str, Any]]:
+    custom_flow = _custom_domestic_flow(dataset_id)
+    if not custom_flow:
+        return _build_abs_source_references(dataset_id, title)
+
+    clean_dataset_id = _base_dataset_id(dataset_id)
+    clean_title = str(title or custom_flow.get("name") or clean_dataset_id).strip()
+    reference = {
+        "provider": str(custom_flow.get("sourceOrganization") or "Custom Australian source").strip(),
+        "dataset_id": clean_dataset_id,
+        "title": clean_title,
+    }
+    source_url = str(custom_flow.get("sourceUrl") or "").strip()
+    source_page_url = str(custom_flow.get("sourcePageUrl") or "").strip()
+    if source_url:
+        reference["url"] = source_url
+    if source_page_url:
+        reference["page_url"] = source_page_url
+    return [reference]
+
+
 def _search_web(query: str, max_results: int = 5) -> Dict[str, Any]:
-    response = httpx.get(
+    logger.info(
+        'Web retrieval request kind=search url="%s" query="%s" max_results=%s',
         WEB_SEARCH_URL,
-        params={"q": query},
-        headers={
-            "User-Agent": WEB_USER_AGENT,
-        },
-        follow_redirects=True,
-        timeout=20,
+        _truncate(query, 280),
+        max_results,
     )
-    response.raise_for_status()
+    try:
+        response = httpx.get(
+            WEB_SEARCH_URL,
+            params={"q": query},
+            headers={
+                "User-Agent": WEB_USER_AGENT,
+            },
+            follow_redirects=True,
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.error(
+            'Web retrieval error kind=search url="%s" query="%s" status=%s error="%s" body="%s"',
+            WEB_SEARCH_URL,
+            _truncate(query, 280),
+            getattr(response, "status_code", ""),
+            _truncate(exc, 300),
+            _truncate(response.text if response is not None else "", 400),
+        )
+        raise
     html = response.text
 
     links = WEB_RESULT_LINK_RE.findall(html)
@@ -1649,13 +1915,28 @@ def _search_web(query: str, max_results: int = 5) -> Dict[str, Any]:
 
 
 def _fetch_web_page(url: str) -> Dict[str, Any]:
-    response = httpx.get(
-        url,
-        headers={"User-Agent": WEB_USER_AGENT},
-        follow_redirects=True,
-        timeout=20,
+    logger.info(
+        'Web retrieval request kind=fetch url="%s"',
+        _truncate(url, 500),
     )
-    response.raise_for_status()
+    try:
+        response = httpx.get(
+            url,
+            headers={"User-Agent": WEB_USER_AGENT},
+            follow_redirects=True,
+            timeout=20,
+        )
+        response.raise_for_status()
+    except Exception as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        logger.error(
+            'Web retrieval error kind=fetch url="%s" status=%s error="%s" body="%s"',
+            _truncate(url, 500),
+            getattr(response, "status_code", ""),
+            _truncate(exc, 300),
+            _truncate(response.text if response is not None else "", 400),
+        )
+        raise
     html = response.text
     title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", html)
     title = _strip_html(title_match.group(1)) if title_match else ""
@@ -1781,11 +2062,11 @@ def _execute_provider_route_tool(
 ) -> Dict[str, Any]:
     route = _normalize_provider_route(tool_input.get("route"))
     if not route:
-        raise RuntimeError("provider_route_tool requires route to be one of abs or macro.")
+        raise RuntimeError("provider_route_tool requires route to be one of aus or macro.")
     reason = str(tool_input.get("reason") or "").strip()
     search_query = str(tool_input.get("searchQuery") or "").strip()
     if not search_query:
-        raise RuntimeError("provider_route_tool requires searchQuery for both abs and macro routes.")
+        raise RuntimeError("provider_route_tool requires searchQuery for both aus and macro routes.")
     logger.info(
         'Provider route selected cid=%s route=%s reason="%s" search_query="%s"',
         conversation_id,
@@ -1987,6 +2268,17 @@ def _execute_macro_data_tool(
             payload = run_macro_query(query)
     except Exception as exc:
         if action == "retrieve":
+            logger.error(
+                'Macro retrieval failed cid=%s query="%s" candidate_ids="%s" countries="%s" all_countries=%s years=%s:%s error="%s"',
+                conversation_id,
+                _truncate(query, 220),
+                ",".join(candidate_ids),
+                ",".join(countries),
+                all_countries,
+                start_year,
+                end_year,
+                _truncate(exc, 500),
+            )
             remaining_candidates = [
                 item for item in _to_list(getattr(state, "current_macro_indicator_shortlist", []) or [])
                 if str(item.get("candidate_id") or "").strip() not in set(candidate_ids)
@@ -2238,7 +2530,21 @@ def _execute_abs_data_tool(
     if action == "metadata":
         if not dataset_id:
             raise RuntimeError("abs_data_tool action metadata requires datasetId")
-        metadata = get_dataflow_metadata(dataset_id, force_refresh=False)
+        logger.info(
+            "ABS metadata request cid=%s datasetId=%s",
+            conversation_id,
+            dataset_id,
+        )
+        try:
+            metadata = get_dataflow_metadata(dataset_id, force_refresh=False)
+        except Exception as exc:
+            logger.error(
+                'ABS metadata error cid=%s datasetId=%s error="%s"',
+                conversation_id,
+                dataset_id,
+                _truncate(exc, 500),
+            )
+            raise
         if not isinstance(metadata, dict):
             raise RuntimeError(f"Live ABS metadata for {dataset_id} was not an object")
         payload = _build_raw_metadata_payload(dataset_id, metadata)
@@ -2256,7 +2562,7 @@ def _execute_abs_data_tool(
 
     if action == "raw_retrieve":
         data_key = str(tool_input.get("dataKey") or "").strip()
-        is_custom_domestic = dataset_id.startswith("CUSTOM_AUS,") or dataset_id == "AES_TABLE_O" or dataset_id.startswith("AES_")
+        is_custom_domestic = _is_custom_domestic_dataset(dataset_id)
         if not data_key and not is_custom_domestic:
             raise RuntimeError("abs_data_tool action raw_retrieve requires dataKey")
         if data_key and not is_custom_domestic:
@@ -2283,21 +2589,35 @@ def _execute_abs_data_tool(
             query_params["startPeriod"] = start_period
         if end_period:
             query_params["endPeriod"] = end_period
-        abs_request_url = (
-            f"{settings.abs_api_base.rstrip('/')}/rest/data/{dataset_id}/{data_key}"
-            f"?{urlencode(query_params)}"
-        )
-        logger.info(
-            "ABS raw_retrieve request cid=%s datasetId=%s dataKey=%s detail=%s dimensionAtObservation=%s startPeriod=%s endPeriod=%s url=%s",
-            conversation_id,
-            dataset_id,
-            data_key,
-            detail,
-            dimension_at_observation,
-            start_period,
-            end_period,
-            abs_request_url,
-        )
+        request_descriptor = ""
+        if is_custom_domestic:
+            custom_flow = _custom_domestic_flow(dataset_id) or {}
+            request_descriptor = str(custom_flow.get("sourceUrl") or custom_flow.get("sourcePageUrl") or "").strip()
+            logger.info(
+                "AUS custom raw_retrieve request cid=%s datasetId=%s dataKey=%s detail=%s source=%s flowType=%s",
+                conversation_id,
+                dataset_id,
+                data_key or "all",
+                detail,
+                request_descriptor,
+                str(custom_flow.get("flowType") or "").strip(),
+            )
+        else:
+            request_descriptor = (
+                f"{settings.abs_api_base.rstrip('/')}/rest/data/{dataset_id}/{data_key}"
+                f"?{urlencode(query_params)}"
+            )
+            logger.info(
+                "ABS raw_retrieve request cid=%s datasetId=%s dataKey=%s detail=%s dimensionAtObservation=%s startPeriod=%s endPeriod=%s url=%s",
+                conversation_id,
+                dataset_id,
+                data_key,
+                detail,
+                dimension_at_observation,
+                start_period,
+                end_period,
+                request_descriptor,
+            )
         try:
             resolved_payload = resolve_dataset(
                 dataset_id=dataset_id,
@@ -2308,9 +2628,17 @@ def _execute_abs_data_tool(
                 dimension_at_observation=dimension_at_observation,
             )
         except Exception as exc:
+            logger.error(
+                'AUS raw_retrieve error cid=%s datasetId=%s dataKey=%s request="%s" error="%s"',
+                conversation_id,
+                dataset_id,
+                data_key,
+                request_descriptor,
+                _truncate(exc, 500),
+            )
             status_code = _bridge_error_status_code(exc)
             if status_code == 404:
-                raise RuntimeError("ABS returned no data for that raw ABS call.") from exc
+                raise RuntimeError("Australian domestic retrieval returned no data for that call.") from exc
             raise
 
         artifact_payload = {
@@ -2329,7 +2657,10 @@ def _execute_abs_data_tool(
                 "rawDiscovery": True,
             },
             "resolved_dataset": resolved_payload,
-            "source_references": _build_abs_source_references(dataset_id, dataset_id),
+            "source_references": _build_domestic_source_references(
+                dataset_id,
+                str(((resolved_payload.get("dataset") if isinstance(resolved_payload, dict) else {}) or {}).get("name") or dataset_id),
+            ),
         }
         artifact_path = run_dir / "artifacts" / f"raw_retrieve_{len(state.artifacts) + 1:03d}.json"
         _write_json(artifact_path, artifact_payload)
@@ -2338,19 +2669,20 @@ def _execute_abs_data_tool(
             state=state,
             path=artifact_path,
             kind="abs_resolved_dataset",
-            label=f"ABS raw resolved {dataset_id}",
+            label=f"Domestic raw resolved {dataset_id}",
             summary=_truncate(
-                f"Resolved raw ABS dataset {dataset_id} with {resolved_payload.get('observationCount', 'unknown')} observations.",
+                f"Resolved domestic dataset {dataset_id} with {resolved_payload.get('observationCount', 'unknown')} observations.",
                 300,
             ),
             source_references=source_references,
         )
+        dataset_label = "custom domestic dataset" if is_custom_domestic else "raw ABS dataset"
         return _tool_result(
             (
-                f"Retrieved raw ABS dataset {dataset_id}.\n"
+                f"Retrieved {dataset_label} {dataset_id}.\n"
                 f"Observation count: {resolved_payload.get('observationCount', 'unknown')}.\n"
                 f"Series count: {len(resolved_payload.get('series') or []) if isinstance(resolved_payload, dict) else 0}.\n"
-                f"Applied data key: {data_key}.\n"
+                f"Applied data key: {data_key or 'all'}.\n"
                 f"Created artifact: {record['artifact_id']}. Use the sandbox tool to inspect or verify the wildcard retrieval."
             ),
             {
@@ -2559,6 +2891,7 @@ def _generate_sandbox_code(
     tool_input: Dict[str, Any],
     state,
     loop_payload: Dict[str, Any],
+    usage_callback: Optional[Callable[[Dict[str, int]], None]] = None,
 ) -> str:
     code = str(tool_input.get("code") or "").strip()
     if code:
@@ -2593,6 +2926,7 @@ def _generate_sandbox_code(
                 artifact_ids=artifact_ids,
             ),
             reasoning_effort="low",
+            usage_callback=usage_callback,
         ).strip()
     except Exception as exc:
         logger.exception(
@@ -2633,7 +2967,7 @@ def _normalize_sandbox_request_handoff(*, sandbox_request: str, artifact_ids: Li
         joined = ", ".join(artifact_ids[:4])
         prefix = (
             f"Use only the passed artifact_ids ({joined}). "
-            "Inspect schema and rows from the selected artifact first, narrow to the minimum slice needed, and only then calculate or prepare chart-ready output. "
+            "Work in this order: inspect first, narrow second, calculate third. "
         )
 
     return (prefix + normalized).strip()
@@ -2646,10 +2980,16 @@ def _execute_sandbox_tool(
     conversation_id: str,
     loop_payload: Dict[str, Any],
     status_callback: Optional[Callable[[str], None]] = None,
+    usage_callback: Optional[Callable[[Dict[str, int]], None]] = None,
 ) -> Dict[str, Any]:
     status_callback = status_callback or (lambda _message: None)
     artifact_ids = tool_input.get("artifact_ids")
-    code = _generate_sandbox_code(tool_input=tool_input, state=state, loop_payload=loop_payload)
+    code = _generate_sandbox_code(
+        tool_input=tool_input,
+        state=state,
+        loop_payload=loop_payload,
+        usage_callback=usage_callback,
+    )
     tool_input["code"] = code
     if not isinstance(artifact_ids, list) or not all(isinstance(item, str) and item.strip() for item in artifact_ids):
         raise RuntimeError("sandbox_tool requires a non-empty artifact_ids array of strings")
@@ -3102,6 +3442,13 @@ def _metadata_anchor_codes_for_dataset(state, dataset_id: str) -> set[str]:
 
 
 def _last_provider_route_context(state) -> Dict[str, str]:
+    stored_route = _normalize_provider_route(getattr(state, "last_provider_route", ""))
+    stored_query = str(getattr(state, "last_provider_search_query", "") or "").strip()
+    if stored_route:
+        payload: Dict[str, str] = {"selected_route": stored_route}
+        if stored_query:
+            payload["selected_search_query"] = stored_query
+        return payload
     for item in reversed(state.loop_history):
         if not isinstance(item, dict):
             continue
@@ -3216,11 +3563,33 @@ def generate_response(
             if not saved_progress_messages or saved_progress_messages[-1] != normalized:
                 saved_progress_messages.append(normalized)
 
+        run_input_tokens = 0
+        run_output_tokens = 0
+        run_cached_input_tokens = 0
+
+        def record_usage(usage: Dict[str, int]) -> None:
+            nonlocal run_input_tokens, run_output_tokens, run_cached_input_tokens
+            if not isinstance(usage, dict):
+                return
+            run_input_tokens += _safe_int(usage.get("input_tokens"))
+            run_output_tokens += _safe_int(usage.get("output_tokens"))
+            run_cached_input_tokens += _safe_int(usage.get("cached_input_tokens"))
+
         def persist_completed_turn(assistant_content: str) -> None:
             state.messages.append({"role": "user", "content": user_content})
             for progress_message in saved_progress_messages:
                 state.messages.append({"role": "progress", "content": progress_message})
-            state.messages.append({"role": "assistant", "content": assistant_content})
+            state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": assistant_content,
+                    "run_cost": _build_run_cost_payload(
+                        input_tokens=run_input_tokens,
+                        cached_input_tokens=run_cached_input_tokens,
+                        output_tokens=run_output_tokens,
+                    ),
+                }
+            )
             state.active_run_message_count = len(state.messages)
             state.active_run_loop_count = len(state.loop_history)
             state.active_run_artifact_count = len(state.artifacts)
@@ -3331,7 +3700,7 @@ def generate_response(
                 pre_run_provider_route = dict(route_hint or {})
                 store.save(state)
 
-            if not pre_run_dataset_shortlist and selected_provider_route == "abs":
+            if not pre_run_dataset_shortlist and selected_provider_route == "aus":
                 shortlist_query = selected_route_query or active_user_message
                 logger.info(
                     'Post-route ABS shortlist start cid=%s route=%s query="%s"',
@@ -3427,6 +3796,7 @@ def generate_response(
                 raw_model_response = _call_model(
                     build_model_messages(payload),
                     reasoning_effort=_retry_reasoning_effort(state),
+                    usage_callback=record_usage,
                 )
             except Exception as exc:
                 logger.exception(
@@ -3540,9 +3910,9 @@ def generate_response(
                     progress_note="Choosing the provider path first.",
                     result_summary=(
                         "The next loop must choose the provider path first.\n"
-                        "Return `provider_route_tool` with route set to `abs` or `macro`.\n"
+                        "Return `provider_route_tool` with route set to `aus` or `macro`.\n"
                         "Also provide `searchQuery` as a standalone retrieval query that resolves any conversational carry-over.\n"
-                        "If the route is `abs`, that query will be used for the Australian domestic FTS shortlist across ABS and curated custom sources.\n"
+                        "If the route is `aus`, that query will be used for the Australian domestic FTS shortlist across ABS and curated custom sources.\n"
                         "If the route is `macro`, that query will be used as the default macro retrieval query in the next loop.\n"
                         "Only do this when the user actually needs new data retrieval.\n"
                         "Use `pre_run_provider_route` only as a heuristic hint.\n"
@@ -3552,7 +3922,7 @@ def generate_response(
                     result_data={
                         "kind": "provider_route_required",
                         "correction_instructions": (
-                            "If retrieval is needed, return provider_route_tool first and choose exactly one route: abs or macro. "
+                            "If retrieval is needed, return provider_route_tool first and choose exactly one route: aus or macro. "
                             "Always include searchQuery as the standalone retrieval query. "
                             "If retrieval is not needed, return compose_final."
                         ),
@@ -3667,6 +4037,7 @@ def generate_response(
                         conversation_id=conversation_id,
                         loop_payload=payload,
                         status_callback=emit_status,
+                        usage_callback=record_usage,
                     )
                 else:
                     raise RuntimeError(f"Unsupported step id: {step['id']}")
@@ -3708,13 +4079,17 @@ def generate_response(
                 if resolved_route:
                     selected_provider_route = resolved_route
                     pre_run_provider_route["selected_route"] = resolved_route
+                    state.last_provider_route = resolved_route
                     selected_route_query = str(result_data.get("search_query") or "").strip()
                     if selected_route_query:
                         pre_run_provider_route["selected_search_query"] = selected_route_query
+                        state.last_provider_search_query = selected_route_query
+                    else:
+                        state.last_provider_search_query = ""
                     if resolved_route == "macro":
                         pre_run_dataset_shortlist = []
                         state.current_abs_dataset_shortlist = []
-                    if resolved_route == "abs":
+                    if resolved_route == "aus":
                         pre_run_macro_indicator_shortlist = []
                         state.current_macro_indicator_shortlist = []
             if step["id"] == "macro_data_tool" and isinstance(result_data, dict):
@@ -3749,7 +4124,12 @@ def generate_response(
                 _truncate(result_summary, 280),
             )
 
-        final_answer = _compose_best_effort_final(conversation_id, active_user_message, state)
+        final_answer = _compose_best_effort_final(
+            conversation_id,
+            active_user_message,
+            state,
+            usage_callback=record_usage,
+        )
         state.pending_plan = None
         persist_completed_turn(final_answer)
         logger.info(

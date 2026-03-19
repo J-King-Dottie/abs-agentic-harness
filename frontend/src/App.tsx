@@ -7,10 +7,20 @@ import { supabase } from "./supabaseClient";
 
 type Sender = "user" | "assistant" | "progress";
 
+interface RunCost {
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  ai_cost_usd?: number;
+  surcharge_usd?: number;
+  final_cost_usd?: number;
+}
+
 interface ChatMessage {
   id: string;
   sender: Sender;
   content: string;
+  runCost?: RunCost;
 }
 
 interface PendingMessage {
@@ -39,6 +49,7 @@ interface ChatAcceptedResponse {
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const STORAGE_KEY = "abs-analyst-session";
 const MAX_POLL_FAILURES = 20;
+const USD_TO_AUD_RATE = 1.398;
 const EXAMPLE_PROMPTS = [
   "What data do you have access to?",
 ];
@@ -55,6 +66,8 @@ interface ChartPoint {
   y: number;
 }
 
+type ChartType = "line" | "bar" | "area" | "scatter" | "stacked_bar" | "stacked_area";
+
 interface ChartSeries {
   name: string;
   color?: string;
@@ -62,7 +75,7 @@ interface ChartSeries {
 }
 
 interface ChartSpec {
-  type?: "line" | "bar";
+  type?: ChartType;
   title?: string;
   xLabel?: string;
   yLabel?: string;
@@ -177,8 +190,21 @@ function parseChartBlock(raw: string): ChartSpec | null {
       return null;
     }
 
+    const supportedTypes = new Set<ChartType>([
+      "line",
+      "bar",
+      "area",
+      "scatter",
+      "stacked_bar",
+      "stacked_area",
+    ]);
+    const chartType: ChartType =
+      typeof parsed.type === "string" && supportedTypes.has(parsed.type as ChartType)
+        ? (parsed.type as ChartType)
+        : "line";
+
     return {
-      type: parsed.type === "bar" ? "bar" : "line",
+      type: chartType,
       title: typeof parsed.title === "string" ? parsed.title : undefined,
       xLabel: typeof parsed.xLabel === "string" ? parsed.xLabel : undefined,
       yLabel: typeof parsed.yLabel === "string" ? parsed.yLabel : undefined,
@@ -339,17 +365,27 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
   const colors = ["#234233", "#8f6a3a", "#54745f", "#b45f3a"];
+  const chartType = spec.type || "line";
+  const isBarLike = chartType === "bar" || chartType === "stacked_bar";
+  const isLineLike = chartType === "line" || chartType === "area" || chartType === "stacked_area";
+  const isAreaLike = chartType === "area" || chartType === "stacked_area";
+  const isStacked = chartType === "stacked_bar" || chartType === "stacked_area";
+  const isScatter = chartType === "scatter";
   const allPoints = spec.series.flatMap((series) => series.points);
-  const xValues = Array.from(new Set(allPoints.map((point) => point.x)));
+  const rawXValues = Array.from(new Set(allPoints.map((point) => point.x)));
+  const scatterNumericX = isScatter && allPoints.every((point) => Number.isFinite(Number(point.x)));
+  const xValues = scatterNumericX
+    ? [...rawXValues].sort((a, b) => Number(a) - Number(b))
+    : rawXValues;
   const longestXAxisLabelLength = xValues.reduce((max, value) => Math.max(max, value.length), 0);
   const longestSeries = Math.max(...spec.series.map((series) => series.points.length), 0);
   const isNarrow = containerWidth > 0 && containerWidth < 640;
   const useHorizontalBars =
-    spec.type === "bar" && (isNarrow || xValues.length > 10 || longestXAxisLabelLength > 16);
+    isBarLike && (isNarrow || xValues.length > 10 || longestXAxisLabelLength > 16);
   const rotateVerticalLabels =
-    spec.type === "bar" && !useHorizontalBars && (xValues.length > 7 || longestXAxisLabelLength > 12);
+    isBarLike && !useHorizontalBars && (xValues.length > 7 || longestXAxisLabelLength > 12);
   const chartHeight =
-    spec.type === "bar" && useHorizontalBars
+    isBarLike && useHorizontalBars
       ? Math.max(360, xValues.length * 28 + 120)
       : 360;
 
@@ -393,7 +429,7 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
           containLabel: false,
         },
     tooltip: {
-      trigger: "axis",
+      trigger: isScatter && scatterNumericX ? "item" : "axis",
       confine: true,
       backgroundColor: "rgba(245, 240, 227, 0.96)",
       borderColor: "rgba(30, 43, 33, 0.12)",
@@ -402,7 +438,7 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
         color: "#1e2b21",
       },
       axisPointer: {
-        type: spec.type === "bar" ? "shadow" : "line",
+        type: isBarLike ? "shadow" : "line",
         lineStyle: {
           color: "rgba(30, 43, 33, 0.22)",
         },
@@ -452,19 +488,20 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
           },
         }
       : {
-          type: "category",
-          data: xValues,
+          type: scatterNumericX ? "value" : "category",
+          data: scatterNumericX ? undefined : xValues,
           name: spec.xLabel,
           nameLocation: "middle",
           nameGap: rotateVerticalLabels ? 78 : spec.xLabel ? 34 : 0,
           axisLabel: {
             color: "rgba(30, 43, 33, 0.58)",
             fontSize: 11,
-            interval: spec.type === "bar" ? 0 : "auto",
+            interval: isBarLike ? 0 : "auto",
             hideOverlap: true,
             rotate: rotateVerticalLabels ? -40 : 0,
             width: rotateVerticalLabels ? 96 : 88,
             overflow: "truncate",
+            formatter: scatterNumericX ? (value: number) => formatTick(Number(value)) : undefined,
           },
           axisLine: {
             lineStyle: {
@@ -525,24 +562,30 @@ function ChartBlock({ spec }: { spec: ChartSpec }) {
             value.min === value.max ? value.max + 1 : value.max + (value.max - value.min) * 0.08,
         },
     series: spec.series.map((series) => {
-      const data = xValues.map((xValue) => {
-        const match = series.points.find((point) => point.x === xValue);
-        return match ? match.y : null;
-      });
+      const data = isScatter && scatterNumericX
+        ? series.points
+            .map((point) => [Number(point.x), point.y])
+            .filter((point) => Number.isFinite(point[0]) && Number.isFinite(point[1]))
+        : xValues.map((xValue) => {
+            const match = series.points.find((point) => point.x === xValue);
+            return match ? match.y : null;
+          });
       return {
         name: series.name,
-        type: spec.type === "bar" ? "bar" : "line",
+        type: isBarLike ? "bar" : isScatter ? "scatter" : "line",
         data,
+        stack: isStacked ? "total" : undefined,
         barMaxWidth: 28,
         barCategoryGap: spec.series.length > 1 ? "34%" : "42%",
-        smooth: spec.type === "line" && spec.series.length === 1 ? 0.15 : 0,
-        showSymbol: spec.type === "line" && longestSeries <= 16 && spec.series.length <= 2,
-        symbolSize: 6,
+        smooth: isLineLike && !isAreaLike && spec.series.length === 1 ? 0.15 : 0,
+        showSymbol: (isLineLike || isScatter) && longestSeries <= 16 && spec.series.length <= 2,
+        symbolSize: isScatter ? 9 : 6,
         lineStyle: {
-          width: spec.series.length > 1 ? 2.4 : 2.8,
+          width: isScatter ? 0 : spec.series.length > 1 ? 2.4 : 2.8,
         },
+        areaStyle: isAreaLike ? { opacity: isStacked ? 0.82 : 0.18 } : undefined,
         itemStyle: {
-          borderRadius: spec.type === "bar" ? [4, 4, 0, 0] : 0,
+          borderRadius: isBarLike ? [4, 4, 0, 0] : 0,
         },
         emphasis: {
           focus: "series",
@@ -778,7 +821,7 @@ function mapBackendMessages(rawMessages: unknown): ChatMessage[] {
     if (!message || typeof message !== "object") {
       return [];
     }
-    const typed = message as { role?: unknown; content?: unknown };
+    const typed = message as { role?: unknown; content?: unknown; run_cost?: unknown };
     const role = typeof typed.role === "string" ? typed.role.trim().toLowerCase() : "";
     const content = typeof typed.content === "string" ? typed.content : "";
     if (!content.trim()) {
@@ -787,14 +830,67 @@ function mapBackendMessages(rawMessages: unknown): ChatMessage[] {
     if (role !== "user" && role !== "assistant" && role !== "progress") {
       return [];
     }
+    const rawRunCost = typed.run_cost;
+    const runCost =
+      rawRunCost && typeof rawRunCost === "object"
+        ? {
+            model: typeof (rawRunCost as RunCost).model === "string" ? (rawRunCost as RunCost).model : undefined,
+            input_tokens: Number((rawRunCost as RunCost).input_tokens),
+            output_tokens: Number((rawRunCost as RunCost).output_tokens),
+            ai_cost_usd: Number((rawRunCost as RunCost).ai_cost_usd),
+            surcharge_usd: Number((rawRunCost as RunCost).surcharge_usd),
+            final_cost_usd: Number((rawRunCost as RunCost).final_cost_usd),
+          }
+        : undefined;
     return [
       {
         id: createConversationId(),
         sender: role as Sender,
         content,
+        runCost,
       } satisfies ChatMessage,
     ];
   });
+}
+
+function formatUsd(value: number | undefined) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) {
+    return "A$0.00";
+  }
+  return `A$${numeric.toFixed(2)}`;
+}
+
+function renderRunCost(runCost?: RunCost) {
+  if (!runCost) {
+    return null;
+  }
+  const finalCost = Number(runCost.final_cost_usd);
+  const aiCost = Number(runCost.ai_cost_usd);
+  const surcharge = Number(runCost.surcharge_usd);
+  const displayCost = Number.isFinite(finalCost) ? finalCost : aiCost;
+  if (!Number.isFinite(displayCost)) {
+    return null;
+  }
+  const hoverParts = [
+    Number.isFinite(aiCost) ? `Raw: ${formatUsd(aiCost * USD_TO_AUD_RATE)}` : "",
+    Number.isFinite(surcharge) ? `10%: ${formatUsd(surcharge * USD_TO_AUD_RATE)}` : "",
+    `Total: ${formatUsd(displayCost * USD_TO_AUD_RATE)}`,
+  ].filter(Boolean);
+  return (
+    <span className="assistant-run-cost-wrap">
+      <span className="assistant-run-cost-trigger" tabIndex={0}>
+        <span className="assistant-run-cost">
+          {formatUsd(displayCost * USD_TO_AUD_RATE)}
+        </span>
+        <div className="assistant-run-cost-tooltip" role="tooltip">
+          {hoverParts.map((part) => (
+            <p key={part}>{part}</p>
+          ))}
+        </div>
+      </span>
+    </span>
+  );
 }
 
 function keepCompletedTurns(messages: ChatMessage[]) {
@@ -899,13 +995,12 @@ function ProductTitle() {
                   </p>
                   <p>
                     This system does the same. Designed for Australian analysts,
-                    it combines detailed ABS data and other public sources with
-                    global context from the OECD, World Bank, and IMF.
+                    it combines detailed domestic data with global macro
+                    sources.
                   </p>
                   <p>
-                    Ask anything from granular Australian data to global economic
-                    comparisons. Nisaba will find the numbers and explain what
-                    they mean.
+                    Ask anything and Nisaba will find the numbers and explain
+                    what they mean.
                   </p>
                   <p>
                     Produced by{" "}
@@ -919,27 +1014,54 @@ function ProductTitle() {
                       target="_blank"
                       rel="noreferrer"
                     >
-                      @ausdata-ai-harness
+                      ausdata-ai-harness
                     </a>
                   </p>
-                  <p>
-                    Powered by{" "}
-                    <a
-                      href="https://github.com/seansoreilly/mcp-server-abs"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      mcp-server-abs
-                    </a>
-                    {" · "}
-                    <a
-                      href="https://github.com/hanlulong/openecon-data"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      openecon-data
-                    </a>
-                  </p>
+                  <div className="info-tooltip-summary">
+                    <div className="table-scroll">
+                      <table className="info-tooltip-table">
+                        <thead>
+                          <tr>
+                            <th>Route</th>
+                            <th>Provider</th>
+                            <th>Datasets</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <td>Domestic</td>
+                            <td>ABS</td>
+                            <td>1,221</td>
+                          </tr>
+                          <tr>
+                            <td>Domestic</td>
+                            <td>DCCEEW</td>
+                            <td>1</td>
+                          </tr>
+                          <tr>
+                            <td>Domestic</td>
+                            <td>RBA</td>
+                            <td>71</td>
+                          </tr>
+                          <tr>
+                            <td>Macro</td>
+                            <td>OECD</td>
+                            <td>1,464</td>
+                          </tr>
+                          <tr>
+                            <td>Macro</td>
+                            <td>World Bank</td>
+                            <td>28,377</td>
+                          </tr>
+                          <tr>
+                            <td>Macro</td>
+                            <td>IMF</td>
+                            <td>132</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               </span>
             </span>
@@ -1681,6 +1803,7 @@ function App() {
                 {message.content ? (
                   <div className="assistant-text-block">
                     {renderContentBlocks(message.content)}
+                    {renderRunCost(message.runCost)}
                     {!isStreaming && latestExportUrl && index === lastCompletedAssistantIndex ? (
                       <div className="assistant-export-link">
                         <a href={`${API_BASE}${latestExportUrl}`} target="_blank" rel="noreferrer" aria-label="Download Excel export">

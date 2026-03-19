@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import re
 import sqlite3
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +19,7 @@ from .config import get_settings
 
 settings = get_settings()
 MACRO_CATALOG_PATH = Path(__file__).resolve().parents[2] / "MACRO_CATALOG_FULL.json"
+logger = logging.getLogger("abs.backend.macro")
 
 
 COUNTRY_ALIASES: Dict[str, str] = {
@@ -90,6 +93,18 @@ COUNTRY_GROUPS: Dict[str, List[str]] = {
 WORLD_BANK_PROVIDER = "World Bank"
 IMF_PROVIDER = "IMF"
 OECD_PROVIDER = "OECD"
+
+
+def _truncate_log(text: Any, length: int = 400) -> str:
+    value = str(text or "").replace("\n", " ").strip()
+    return value if len(value) <= length else value[: length - 1] + "…"
+
+
+def _request_url(url: str, params: Optional[Dict[str, Any]] = None) -> str:
+    if not params:
+        return url
+    filtered = {key: value for key, value in params.items() if value is not None}
+    return f"{url}?{httpx.QueryParams(filtered)}"
 
 MACRO_CONCEPTS: List[Dict[str, Any]] = [
     {
@@ -908,21 +923,88 @@ def _parse_world_bank_error(payload: Any) -> Optional[str]:
     return "; ".join(parts) if parts else None
 
 
+def _looks_like_html_error(text: str) -> bool:
+    normalized = str(text or "").lstrip().lower()
+    return normalized.startswith("<!doctype html") or normalized.startswith("<html") or normalized.startswith("<?xml")
+
+
+def _fetch_world_bank_with_curl(request_url: str) -> Any:
+    completed = subprocess.run(
+        ["curl", "-L", "-sS", request_url],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    body = completed.stdout or ""
+    if _looks_like_html_error(body):
+        raise RuntimeError(f"World Bank curl fallback returned HTML error page for {request_url}")
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"World Bank curl fallback returned non-JSON response for {request_url}: {_truncate_log(body, 300)}"
+        ) from exc
+
+
 def _fetch_world_bank(query: str, concept: Dict[str, Any], provider_config: Dict[str, Any], countries: List[str], start_year: Optional[int], end_year: Optional[int], *, all_countries: bool = False) -> Dict[str, Any]:
     if not countries and not all_countries:
         countries = ["AUS"]
     series_id = str(provider_config.get("series_id") or "").strip()
     label = str(provider_config.get("label") or concept.get("label") or series_id).strip()
-    country_path = "all" if all_countries else ";".join(countries)
+    requested_countries = list(countries)
+    country_path = "all"
     url = f"{settings.worldbank_base_url.rstrip('/')}/country/{country_path}/indicator/{series_id}"
     params: Dict[str, Any] = {"format": "json", "per_page": 20000}
     if start_year and end_year:
         params["date"] = f"{start_year}:{end_year}"
-    response = httpx.get(url, params=params, timeout=settings.macro_timeout_seconds)
-    response.raise_for_status()
-    payload = response.json()
+    request_url = _request_url(url, params)
+    logger.info(
+        'Macro retrieval request provider=worldbank indicator=%s countries="%s" all_countries=%s url="%s"',
+        series_id,
+        ",".join(countries),
+        all_countries,
+        _truncate_log(request_url, 700),
+    )
+    try:
+        response = httpx.get(url, params=params, timeout=settings.macro_timeout_seconds)
+        response.raise_for_status()
+        if _looks_like_html_error(response.text):
+            raise RuntimeError("World Bank returned an HTML error page.")
+        payload = response.json()
+    except Exception as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        body_preview = _truncate_log(response.text, 500) if response is not None else ""
+        logger.error(
+            'Macro retrieval error provider=worldbank indicator=%s url="%s" status=%s error="%s" body="%s"',
+            series_id,
+            _truncate_log(request_url, 700),
+            getattr(response, "status_code", ""),
+            _truncate_log(exc, 500),
+            body_preview,
+        )
+        logger.info(
+            'Macro retrieval retry provider=worldbank indicator=%s method=curl url="%s"',
+            series_id,
+            _truncate_log(request_url, 700),
+        )
+        try:
+            payload = _fetch_world_bank_with_curl(request_url)
+        except Exception as curl_exc:
+            logger.error(
+                'Macro retrieval error provider=worldbank indicator=%s method=curl url="%s" error="%s"',
+                series_id,
+                _truncate_log(request_url, 700),
+                _truncate_log(curl_exc, 500),
+            )
+            raise exc
     error_message = _parse_world_bank_error(payload)
     if error_message:
+        logger.error(
+            'Macro retrieval error provider=worldbank indicator=%s url="%s" api_error="%s"',
+            series_id,
+            _truncate_log(request_url, 700),
+            _truncate_log(error_message, 500),
+        )
         raise RuntimeError(f"World Bank error for {series_id}: {error_message}")
     if not isinstance(payload, list) or len(payload) < 2 or not isinstance(payload[1], list):
         raise RuntimeError("World Bank returned an unexpected response shape.")
@@ -941,7 +1023,7 @@ def _fetch_world_bank(query: str, concept: Dict[str, Any], provider_config: Dict
 
     series: List[Dict[str, Any]] = []
     source_refs: List[Dict[str, Any]] = []
-    country_codes = sorted(by_country.keys()) if all_countries else countries
+    country_codes = sorted(by_country.keys()) if all_countries else requested_countries
     for country_code in country_codes:
         points = sorted(by_country.get(country_code) or [], key=lambda item: item["x"])
         if not points:
@@ -972,7 +1054,19 @@ def _fetch_world_bank(query: str, concept: Dict[str, Any], provider_config: Dict
         )
 
     if not series:
+        logger.error(
+            'Macro retrieval error provider=worldbank indicator=%s url="%s" error="%s"',
+            series_id,
+            _truncate_log(request_url, 700),
+            "World Bank returned no usable data.",
+        )
         raise RuntimeError(f"World Bank returned no usable data for {series_id}.")
+    logger.info(
+        "Macro retrieval success provider=worldbank indicator=%s series=%s url=\"%s\"",
+        series_id,
+        len(series),
+        _truncate_log(str(response.request.url), 700),
+    )
 
     return {
         "provider": WORLD_BANK_PROVIDER,
@@ -988,9 +1082,29 @@ def _fetch_imf(query: str, concept: Dict[str, Any], provider_config: Dict[str, A
     series_id = str(provider_config.get("series_id") or "").strip()
     label = str(provider_config.get("label") or concept.get("label") or series_id).strip()
     url = f"{settings.imf_base_url.rstrip('/')}/{series_id}"
-    response = httpx.get(url, timeout=settings.macro_timeout_seconds)
-    response.raise_for_status()
-    payload = response.json()
+    logger.info(
+        'Macro retrieval request provider=imf indicator=%s countries="%s" all_countries=%s url="%s"',
+        series_id,
+        ",".join(countries),
+        all_countries,
+        _truncate_log(url, 700),
+    )
+    try:
+        response = httpx.get(url, timeout=settings.macro_timeout_seconds)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        body_preview = _truncate_log(response.text, 500) if response is not None else ""
+        logger.error(
+            'Macro retrieval error provider=imf indicator=%s url="%s" status=%s error="%s" body="%s"',
+            series_id,
+            _truncate_log(url, 700),
+            getattr(response, "status_code", ""),
+            _truncate_log(exc, 500),
+            body_preview,
+        )
+        raise
     values = payload.get("values") if isinstance(payload.get("values"), dict) else {}
     series_values = values.get(series_id) if isinstance(values.get(series_id), dict) else {}
     if not isinstance(series_values, dict):
@@ -1045,7 +1159,19 @@ def _fetch_imf(query: str, concept: Dict[str, Any], provider_config: Dict[str, A
         )
 
     if not series:
+        logger.error(
+            'Macro retrieval error provider=imf indicator=%s url="%s" error="%s"',
+            series_id,
+            _truncate_log(str(response.request.url), 700),
+            "IMF returned no usable data.",
+        )
         raise RuntimeError(f"IMF returned no usable data for {series_id}.")
+    logger.info(
+        "Macro retrieval success provider=imf indicator=%s series=%s url=\"%s\"",
+        series_id,
+        len(series),
+        _truncate_log(str(response.request.url), 700),
+    )
 
     return {
         "provider": IMF_PROVIDER,
@@ -1134,9 +1260,30 @@ def _fetch_oecd(query: str, concept: Dict[str, Any], provider_config: Dict[str, 
     if end_year:
         params["endPeriod"] = str(end_year)
 
-    response = httpx.get(url, params=params, timeout=max(settings.macro_timeout_seconds, 60))
-    response.raise_for_status()
-    text = response.text
+    request_url = _request_url(url, params)
+    logger.info(
+        'Macro retrieval request provider=oecd indicator=%s countries="%s" all_countries=%s url="%s"',
+        dataflow,
+        ",".join(countries),
+        all_countries,
+        _truncate_log(request_url, 700),
+    )
+    try:
+        response = httpx.get(url, params=params, timeout=max(settings.macro_timeout_seconds, 60))
+        response.raise_for_status()
+        text = response.text
+    except Exception as exc:
+        response = exc.response if isinstance(exc, httpx.HTTPStatusError) else None
+        body_preview = _truncate_log(response.text, 500) if response is not None else ""
+        logger.error(
+            'Macro retrieval error provider=oecd indicator=%s url="%s" status=%s error="%s" body="%s"',
+            dataflow,
+            _truncate_log(request_url, 700),
+            getattr(response, "status_code", ""),
+            _truncate_log(exc, 500),
+            body_preview,
+        )
+        raise
     if "Could not find Dataflow" in text:
         raise RuntimeError(f"OECD dataflow {agency},{dataflow},{version} was not found.")
 
@@ -1154,6 +1301,12 @@ def _fetch_oecd(query: str, concept: Dict[str, Any], provider_config: Dict[str, 
             countries = ["AUS"]
     selected_rows = _choose_oecd_rows(rows, provider_config, countries)
     if not selected_rows:
+        logger.error(
+            'Macro retrieval error provider=oecd indicator=%s url="%s" error="%s"',
+            dataflow,
+            _truncate_log(str(response.request.url), 700),
+            "OECD returned no usable rows.",
+        )
         raise RuntimeError(f"OECD returned no usable rows for {dataflow}.")
 
     label = str(provider_config.get("label") or concept.get("label") or dataflow).strip()
@@ -1199,7 +1352,19 @@ def _fetch_oecd(query: str, concept: Dict[str, Any], provider_config: Dict[str, 
         )
 
     if not series:
+        logger.error(
+            'Macro retrieval error provider=oecd indicator=%s url="%s" error="%s"',
+            dataflow,
+            _truncate_log(str(response.request.url), 700),
+            "OECD returned no usable points.",
+        )
         raise RuntimeError(f"OECD returned no usable points for {dataflow}.")
+    logger.info(
+        "Macro retrieval success provider=oecd indicator=%s series=%s url=\"%s\"",
+        dataflow,
+        len(series),
+        _truncate_log(str(response.request.url), 700),
+    )
 
     return {
         "provider": OECD_PROVIDER,

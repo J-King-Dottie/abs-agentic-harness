@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import logger from '../../utils/logger.js';
 import { ABSApiClient } from './ABSApiClient.js';
 import { DcceewAesService } from '../custom/DcceewAesService.js';
+import { RbaTablesCsvService } from '../custom/RbaTablesCsvService.js';
 import {
     DataFlow,
     DataFlowCache,
@@ -27,6 +28,7 @@ export class DataFlowService {
     private readonly refreshIntervalMs: number;
     private readonly apiClient: ABSApiClient;
     private readonly dcceewAesService: DcceewAesService;
+    private readonly rbaTablesCsvService: RbaTablesCsvService;
     private readonly ftsDbPath: string;
     private readonly ftsScriptPath: string;
     private readonly legacyFtsDbPaths: string[];
@@ -38,6 +40,7 @@ export class DataFlowService {
         this.refreshIntervalMs = refreshIntervalHours * 60 * 60 * 1000;
         this.apiClient = new ABSApiClient();
         this.dcceewAesService = new DcceewAesService(path.dirname(resolvedCachePath));
+        this.rbaTablesCsvService = new RbaTablesCsvService(path.dirname(resolvedCachePath));
         this.ftsDbPath = path.join(path.dirname(resolvedCachePath), 'AUS_DOMESTIC_DATAFLOWS_FTS.sqlite3');
         this.ftsScriptPath = path.join(path.dirname(resolvedCachePath), 'scripts', 'abs_dataflows_fts.py');
         this.legacyFtsDbPaths = [
@@ -96,6 +99,9 @@ export class DataFlowService {
         const flow = await this.resolveFlow(flowId, false);
         if (this.dcceewAesService.supports(flow)) {
             return this.dcceewAesService.query(flow, dataKey, options);
+        }
+        if (this.rbaTablesCsvService.supports(flow)) {
+            return this.rbaTablesCsvService.query(flow, dataKey, options);
         }
         return this.apiClient.getData(flowId, dataKey, options);
     }
@@ -164,6 +170,9 @@ export class DataFlowService {
 
         if (this.dcceewAesService.supports(selectedFlow)) {
             return this.dcceewAesService.getMetadata(selectedFlow);
+        }
+        if (this.rbaTablesCsvService.supports(selectedFlow)) {
+            return this.rbaTablesCsvService.getMetadata(selectedFlow);
         }
 
         const structureRef = selectedFlow.structure ?? {
